@@ -50,7 +50,7 @@ router.post('/login', async (req, res) => {
     console.log('Login request received:', req.body);
     const { email, password } = req.body;
 
-    const user = await User.findOne({ email });
+    const user = await User.findOne({ email }).select('+password');
     if (!user) {
       console.log('User not found:', email);
       return res.status(401).json({ message: 'Email ou senha inválidos' });
@@ -101,26 +101,38 @@ router.get('/me', protect, async (req, res) => {
   }
 });
 
-// Change Password
-router.put('/change-password', protect, async (req, res) => {
+// Change password
+router.patch('/change-password', protect, async (req, res) => {
   try {
-    const { currentPassword, newPassword } = req.body;
-    const user = await User.findById(req.user.id);
-
-    // Verificar se a senha atual está correta
-    const isMatch = await user.matchPassword(currentPassword);
-    if (!isMatch) {
-      return res.status(401).json({ message: 'Senha atual incorreta' });
+    console.log('Change password request body:', req.body);
+    const { oldPassword, newPassword } = req.body;
+    
+    // Log the extracted values
+    console.log('Old Password:', oldPassword);
+    console.log('New Password:', newPassword);
+    
+    // Get user with password field explicitly included
+    const user = await User.findById(req.user._id).select('+password');
+    if (!user) {
+      return res.status(404).json({ message: 'Usuário não encontrado' });
     }
-
-    // Atualizar a senha
+    
+    console.log('User found:', { id: user._id, hasPassword: !!user.password });
+    
+    // Check if current password matches
+    const isMatch = await user.matchPassword(oldPassword);
+    if (!isMatch) {
+      return res.status(400).json({ message: 'Senha atual incorreta' });
+    }
+    
+    // Update password
     user.password = newPassword;
     await user.save();
-
+    
     res.json({ message: 'Senha alterada com sucesso' });
   } catch (error) {
-    console.error('Erro ao alterar senha:', error);
-    res.status(500).json({ message: 'Erro no servidor', error: error.message });
+    console.error('Change password error:', error);
+    res.status(500).json({ message: 'Erro ao alterar senha', error: error.message });
   }
 });
 
