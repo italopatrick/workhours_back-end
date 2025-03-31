@@ -21,6 +21,9 @@ const companySettingsSchema = new mongoose.Schema({
     type: String,
     validate: {
       validator: function(v) {
+        // Se o campo estiver vazio, retorna true (válido)
+        if (!v) return true;
+        // Se tiver valor, valida o formato do email
         return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
       },
       message: props => `${props.value} não é um email válido!`

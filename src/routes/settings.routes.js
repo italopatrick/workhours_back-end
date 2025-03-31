@@ -51,6 +51,31 @@ router.get('/logo', protect, async (req, res) => {
   }
 });
 
+// Upload da logo da empresa
+router.post('/logo', protect, admin, upload.single('logo'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ message: 'Nenhum arquivo enviado' });
+    }
+
+    const settings = await CompanySettings.findOne();
+    if (!settings) {
+      return res.status(404).json({ message: 'Configurações não encontradas' });
+    }
+
+    settings.logo = {
+      data: req.file.buffer,
+      contentType: req.file.mimetype
+    };
+
+    await settings.save();
+    res.json({ message: 'Logo atualizada com sucesso' });
+  } catch (error) {
+    console.error('Erro ao fazer upload da logo:', error);
+    res.status(500).json({ message: 'Erro ao fazer upload da logo' });
+  }
+});
+
 // Atualizar configurações da empresa
 router.put('/', protect, admin, upload.single('logo'), async (req, res) => {
   try {
