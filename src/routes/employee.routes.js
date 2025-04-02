@@ -34,20 +34,21 @@ router.get('/', protect, async (req, res) => {
 // Create new employee (admin only)
 router.post('/', protect, admin, async (req, res) => {
   try {
-    const { name, email, department, role } = req.body;
+    const { name, email, password, department, role } = req.body;
 
     const userExists = await User.findOne({ email });
     if (userExists) {
       return res.status(400).json({ message: 'User already exists' });
     }
 
-    // Gera uma senha padrão usando as primeiras 5 letras do email + @123
-    const defaultPassword = email.substring(0, 5).toLowerCase() + '@123';
+    if (!password) {
+      return res.status(400).json({ message: 'Password is required' });
+    }
 
     const user = await User.create({
       name,
       email,
-      password: defaultPassword,
+      password,
       department,
       role: role || 'employee',
     });
