@@ -1,29 +1,32 @@
-# Estágio de construção
-FROM node:18 AS builder
+# Use uma imagem Node.js oficial
+FROM node:18-alpine
 
-# Define o diretório de trabalho
+# Criar usuário não-root por segurança
+RUN addgroup -g 1001 -S nodejs
+RUN adduser -S nextjs -u 1001
+
+# Definir diretório de trabalho
 WORKDIR /app
 
-# Copia os arquivos de dependências
+# Copiar arquivos de dependências
 COPY package*.json ./
 
+# Instalar dependências
+RUN npm ci --only=production && npm cache clean --force
 
-# Instala as dependências
-RUN npm install
-
-# Copia o restante dos arquivos
+# Copiar código da aplicação
 COPY . .
 
-# Estágio de produção
-FROM node:18-slim
+# Mudar propriedade dos arquivos para o usuário nodejs
+RUN chown -R nextjs:nodejs /app
+USER nextjs
 
-WORKDIR /app
-
-# Copia os arquivos do estágio de construção
-COPY --from=builder /app .
-
-# Expõe a porta 5000
+# Expor a porta
 EXPOSE 5000
 
-# Define o comando de inicialização
+# Definir variáveis de ambiente padrão
+ENV NODE_ENV=production
+ENV PORT=5000
+
+# Comando para iniciar a aplicação
 CMD ["npm", "start"]
