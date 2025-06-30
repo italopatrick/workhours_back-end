@@ -1,6 +1,10 @@
 # Use uma imagem Node.js oficial
 FROM node:18-alpine
 
+# Configurar timezone para Brasil (GMT-3)
+RUN apk add --no-cache tzdata
+ENV TZ=America/Sao_Paulo
+
 # Criar usuário não-root por segurança
 RUN addgroup -g 1001 -S nodejs
 RUN adduser -S nextjs -u 1001

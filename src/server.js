@@ -34,10 +34,22 @@ connectDB();
 
 // Root route - Welcome message
 app.get('/', (req, res) => {
+  const now = new Date();
+  const brasilTime = now.toLocaleString('pt-BR', { 
+    timeZone: 'America/Sao_Paulo',
+    year: 'numeric',
+    month: '2-digit', 
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit'
+  });
+  
   res.json({
     message: '🚀 API Back-end Prime Time rodando com sucesso!',
     status: 'online',
-    timestamp: new Date().toISOString()
+    timestamp: brasilTime,
+    timezone: 'GMT-3 (Brasil)'
   });
 });
 
