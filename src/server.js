@@ -32,7 +32,16 @@ const connectDB = async () => {
 
 connectDB();
 
-// Routes
+// Root route - Welcome message
+app.get('/', (req, res) => {
+  res.json({
+    message: '🚀 API Back-end Prime Time rodando com sucesso!',
+    status: 'online',
+    timestamp: new Date().toISOString()
+  });
+});
+
+// API Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/employees', employeeRoutes);
 app.use('/api/overtime', overtimeRoutes);
