@@ -66,8 +66,8 @@ router.get('/', protect, async (req, res) => {
     // Formata os registros para o frontend
     const formattedRecords = records.map(record => ({
       id: record._id,
-      employeeId: record.employeeId._id,
-      employeeName: record.employeeId.name,
+      employeeId: record.employeeId ? record.employeeId._id : null,
+      employeeName: record.employeeId ? record.employeeId.name : 'Funcionário não encontrado',
       date: record.date, // O campo já é uma string no formato YYYY-MM-DD
       startTime: record.startTime,
       endTime: record.endTime,
@@ -131,8 +131,8 @@ router.post('/', protect, async (req, res) => {
     // Formata a resposta
     const formattedOvertime = {
       id: populatedOvertime._id,
-      employeeId: populatedOvertime.employeeId._id,
-      employeeName: populatedOvertime.employeeId.name,
+      employeeId: populatedOvertime.employeeId ? populatedOvertime.employeeId._id : null,
+      employeeName: populatedOvertime.employeeId ? populatedOvertime.employeeId.name : 'Funcionário não encontrado',
       date: populatedOvertime.date,
       startTime: populatedOvertime.startTime,
       endTime: populatedOvertime.endTime,
@@ -168,8 +168,8 @@ router.patch('/:id', protect, admin, async (req, res) => {
     // Formata a resposta no mesmo formato que o GET
     const formattedOvertime = {
       id: updatedOvertime._id,
-      employeeId: updatedOvertime.employeeId._id,
-      employeeName: updatedOvertime.employeeId.name,
+      employeeId: updatedOvertime.employeeId ? updatedOvertime.employeeId._id : null,
+      employeeName: updatedOvertime.employeeId ? updatedOvertime.employeeId.name : 'Funcionário não encontrado',
       date: updatedOvertime.date,
       startTime: updatedOvertime.startTime,
       endTime: updatedOvertime.endTime,
