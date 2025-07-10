@@ -9,7 +9,10 @@ const userSchema = new mongoose.Schema({
   },
   password: {
     type: String,
-    required: true,
+    required: function() {
+      // Senha não é obrigatória para usuários autenticados externamente
+      return !this.externalAuth;
+    },
     select: false
   },
   role: {
@@ -24,13 +27,27 @@ const userSchema = new mongoose.Schema({
   department: {
     type: String,
     required: true,
+  },
+  // Campos para autenticação externa
+  externalId: {
+    type: String,
+    unique: true,
+    sparse: true // Permite que seja nulo para usuários existentes
+  },
+  externalAuth: {
+    type: Boolean,
+    default: false
   }
 }, {
   timestamps: true,
 });
 
 userSchema.pre('save', async function(next) {
-  if (!this.isModified('password')) return next();
+  // Se for um usuário externo ou a senha não foi modificada, pula o hash
+  if (this.externalAuth || !this.isModified('password')) return next();
+  
+  // Se a senha estiver vazia para um usuário externo, pula o hash
+  if (this.externalAuth && !this.password) return next();
   
   try {
     console.log('Hashing password for user:', this.email);
@@ -45,13 +62,19 @@ userSchema.pre('save', async function(next) {
 });
 
 userSchema.methods.matchPassword = async function(candidatePassword) {
+  // Se for um usuário externo e não tiver senha, não permite login local
+  if (this.externalAuth && !this.password) {
+    console.log('External user without password tried local login:', this.email);
+    return false;
+  }
+  
   try {
     console.log('Comparing password for user:', this.email);
     const isMatch = await bcrypt.compare(candidatePassword, this.password);
-    console.log('Password match result for user:', this.email, isMatch);
+    console.log('Password match result:', isMatch);
     return isMatch;
   } catch (error) {
-    console.error('Error comparing passwords:', error);
+    console.error('Error comparing password:', error);
     throw error;
   }
 };
