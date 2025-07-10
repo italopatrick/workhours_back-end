@@ -4,7 +4,8 @@ Sistema completo para gerenciamento de horas extras com autenticação, aprovaç
 
 ## 📋 Funcionalidades
 
-- **🔐 Autenticação JWT** - Login seguro com diferentes níveis de acesso
+- **🔐 Autenticação Externa** - Integração com API externa do sistema de controle interno
+- **🔐 Autenticação JWT** - Login seguro com diferentes níveis de acesso (admin/employee)
 - **👥 Gestão de Funcionários** - Cadastro e gerenciamento de usuários
 - **⏰ Controle de Horas Extras** - Solicitação e aprovação de horas extras
 - **📊 Relatórios** - Geração de relatórios em PDF e CSV
@@ -195,7 +196,19 @@ docker-compose up -d
 
 ## 🔒 Segurança
 
+### Autenticação Externa
+
+O sistema utiliza exclusivamente a API externa do sistema de controle interno para autenticação:
+
+- **Integração Completa**: Autenticação exclusiva via API externa do controle interno
+- **Mapeamento de Departamentos**: Conversão automática de IDs para nomes de departamentos
+- **Controle de Papéis**: Definição de papéis (admin/employee) com base em IDs de usuário
+- **Proxy Seguro**: Backend atua como proxy para evitar problemas de CORS
+
+### Configurações de Segurança
+
 - **JWT_SECRET**: Use pelo menos 32 caracteres aleatórios
+- **EXTERNAL_API_URL**: URL da API externa do controle interno
 - **MongoDB**: Configure autenticação se necessário
 - **SMTP**: Use senha de aplicativo, não senha pessoal
 - **Firewall**: Configure adequadamente para permitir apenas conexões necessárias
@@ -207,7 +220,8 @@ docker-compose up -d
 - **Express** - Framework web
 - **MongoDB** - Banco de dados NoSQL
 - **Mongoose** - ODM para MongoDB
-- **JWT** - Autenticação
+- **API Externa** - Autenticação via sistema de controle interno
+- **JWT** - Autenticação local após validação externa
 - **BCrypt** - Hash de senhas
 - **Nodemailer** - Envio de emails
 - **PDFKit** - Geração de PDFs
