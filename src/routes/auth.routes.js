@@ -198,7 +198,19 @@ router.post('/external-login', async (req, res) => {
       
       // Extrair informações do usuário externo
       const userName = externalUserData.name || externalUserData.displayName || externalUserData.userName || 'Usuário Externo';
-      const userEmail = externalUserData.email || `${externalId}@external.com`;
+      
+      // Extrair o primeiro nome para usar no email padrão
+      let firstName = '';
+      if (userName && userName !== 'Usuário Externo') {
+        // Pega o primeiro nome (antes do primeiro espaço)
+        firstName = userName.split(' ')[0].toLowerCase();
+        // Remove acentos e caracteres especiais para uso em email
+        firstName = firstName.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      }
+      
+      // Usar o primeiro nome no email se disponível, caso contrário usar o ID externo
+      const userEmail = externalUserData.email || 
+        (firstName ? `${firstName}@primesoftware.com.br` : `${externalId}@primesoftware.com.br`);
       
       // Obter o nome do departamento a partir do ID do departamento
       let userDepartment = 'Externo';
