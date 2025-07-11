@@ -83,9 +83,22 @@ router.post('/external-login', async (req, res) => {
       // Obter o texto da resposta primeiro
       const responseText = await loginResponse.text();
       
-      if (!loginResponse.ok) {
+      // Verificar se a resposta contém mensagem de erro, mesmo com status 2xx
+      if (!loginResponse.ok || responseText.includes('failed') || responseText.includes('error') || responseText.includes('403')) {
         console.log('Falha na autenticação com a API externa:', responseText);
-        return res.status(401).json({ message: 'Credenciais inválidas para o sistema externo', details: responseText });
+        
+        // Verificar se é um erro de permissão (403)
+        if (responseText.includes('403')) {
+          return res.status(403).json({ 
+            message: 'Acesso negado pela API externa. O usuário não tem permissão para acessar o sistema.', 
+            details: responseText 
+          });
+        }
+        
+        return res.status(401).json({ 
+          message: 'Credenciais inválidas para o sistema externo', 
+          details: responseText 
+        });
       }
       
       // Tentar fazer parse do JSON
@@ -94,38 +107,27 @@ router.post('/external-login', async (req, res) => {
         // Verificar se a resposta está vazia
         if (!responseText || responseText.trim() === '') {
           console.log('Resposta da API externa está vazia, mas o status é OK');
-          // Como o status é 201, podemos assumir que a autenticação foi bem-sucedida
-          // e criar um token manualmente
-          externalData = {
-            token: 'token-simulado-' + Date.now(),
-            user: {
-              id: login,
-              name: 'Usuário ' + login,
-              departmentId: 6 // Valor padrão
-            }
-          };
+          return res.status(500).json({ message: 'A API externa retornou uma resposta vazia' });
         } else {
           // Tentar fazer parse do JSON
-          externalData = JSON.parse(responseText);
+          try {
+            externalData = JSON.parse(responseText);
+          } catch (parseError) {
+            console.error('Erro ao fazer parse da resposta JSON:', parseError);
+            console.log('Resposta original:', responseText);
+            return res.status(500).json({ 
+              message: 'Erro ao processar resposta da API externa', 
+              details: responseText.substring(0, 200) // Limita o tamanho da resposta para evitar dados muito grandes
+            });
+          }
         }
         
         console.log('============= RESPOSTA COMPLETA DA API EXTERNA =============');
         console.log(JSON.stringify(externalData, null, 2));
         console.log('=========================================================');
       } catch (error) {
-        console.error('Erro ao fazer parse da resposta JSON:', error);
-        console.log('Resposta original:', responseText);
-        
-        // Como o status é 201, podemos assumir que a autenticação foi bem-sucedida
-        // e criar um token manualmente
-        externalData = {
-          token: 'token-simulado-' + Date.now(),
-          user: {
-            id: login,
-            name: 'Usuário ' + login,
-            departmentId: 6 // Valor padrão
-          }
-        };
+        console.error('Erro ao processar resposta da API externa:', error);
+        return res.status(500).json({ message: 'Erro ao processar resposta da API externa', error: error.message });
       }
       
       if (!externalData || !externalData.token) {
