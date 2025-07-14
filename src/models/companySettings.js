@@ -36,6 +36,12 @@ const companySettingsSchema = new mongoose.Schema({
   updatedAt: {
     type: Date,
     default: Date.now
+  },
+  // Limite padrão de horas extras por mês para todos os funcionários
+  defaultOvertimeLimit: {
+    type: Number,
+    min: 0,
+    default: 40 // 40 horas por padrão
   }
 });
 

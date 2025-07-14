@@ -1,4 +1,5 @@
 import express from 'express';
+import mongoose from 'mongoose';
 import { protect, admin } from '../middleware/auth.js';
 import Overtime from '../models/Overtime.js';
 import User from '../models/User.js';
@@ -28,6 +29,18 @@ const calculateHours = (startTime, endTime) => {
   }
   
   return Number((totalMinutes / 60).toFixed(2)); // Retorna horas com 2 casas decimais
+};
+
+// Função para formatar horas para exibição
+const formatHoursForDisplay = (hours) => {
+  if (typeof hours !== 'number') {
+    hours = Number(hours);
+  }
+  
+  const hoursInt = Math.floor(hours);
+  const minutes = Math.round((hours - hoursInt) * 60);
+  
+  return `${hoursInt}h${minutes > 0 ? minutes + 'min' : ''}`;
 };
 
 // Get all overtime records (filtered by user for employees, all for admin)
@@ -105,7 +118,7 @@ router.post('/', protect, async (req, res) => {
     // Se for admin, usa o employeeId do body, senão usa o id do usuário logado
     const employeeId = req.user.role === 'admin' ? req.body.employeeId : req.user._id;
 
-    // Busca o funcionário para pegar o nome
+    // Busca o funcionário para pegar o nome e limite de horas extras
     const employee = await User.findById(employeeId);
     if (!employee) {
       return res.status(404).json({ message: 'Funcionário não encontrado' });
@@ -113,7 +126,62 @@ router.post('/', protect, async (req, res) => {
 
     // Calcula as horas corretamente
     const hours = calculateHours(startTime, endTime);
-
+    
+    // Verifica se o registro vai ultrapassar o limite de horas extras
+    // 1. Obtém o mês e ano atual
+    const overtimeDate = new Date(date);
+    const currentYear = overtimeDate.getFullYear();
+    const currentMonth = overtimeDate.getMonth() + 1; // getMonth() retorna 0-11
+    
+    // 2. Formata as datas de início e fim do mês
+    const startDate = `${currentYear}-${String(currentMonth).padStart(2, '0')}-01`;
+    const lastDay = new Date(currentYear, currentMonth, 0).getDate();
+    const endDate = `${currentYear}-${String(currentMonth).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+    
+    // 3. Busca os registros de horas extras do mês
+    const filter = {
+      employeeId,
+      date: { $gte: startDate, $lte: endDate },
+      status: { $in: ['approved', 'pending'] }
+    };
+    
+    const overtimeRecords = await Overtime.find(filter);
+    const currentMonthHours = overtimeRecords.reduce((sum, record) => sum + record.hours, 0);
+    
+    // 4. Busca o limite padrão da empresa
+    const CompanySettings = mongoose.model('CompanySettings');
+    const settings = await CompanySettings.findOne();
+    const defaultLimit = settings?.defaultOvertimeLimit || 40;
+    
+    // 5. Determina o limite aplicável (individual ou padrão)
+    let overtimeLimit = employee.overtimeLimit || defaultLimit;
+    
+    // 6. Verifica se há exceções para o mês atual
+    let additionalHours = 0;
+    if (employee.overtimeExceptions && employee.overtimeExceptions.length > 0) {
+      const exception = employee.overtimeExceptions.find(
+        e => e.month === currentMonth && e.year === currentYear
+      );
+      if (exception) {
+        additionalHours = exception.additionalHours;
+      }
+    }
+    
+    // 7. Calcula o limite efetivo
+    const effectiveLimit = overtimeLimit + additionalHours;
+    
+    // 8. Verifica se o registro vai ultrapassar o limite
+    const totalAfterRegistration = currentMonthHours + hours;
+    if (totalAfterRegistration > effectiveLimit) {
+      return res.status(400).json({ 
+        message: `Este registro ultrapassará o limite de horas extras. Total após registro: ${formatHoursForDisplay(totalAfterRegistration)}, de ${formatHoursForDisplay(effectiveLimit)} permitidas.`,
+        currentHours: currentMonthHours,
+        newHours: hours,
+        totalAfterRegistration,
+        limit: effectiveLimit
+      });
+    }
+    
     // Cria o registro de hora extra
     const overtime = await Overtime.create({
       employeeId,
@@ -182,6 +250,145 @@ router.patch('/:id', protect, admin, async (req, res) => {
   } catch (error) {
     console.error('Error updating overtime status:', error);
     res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// Get current month overtime hours for employee
+router.get('/current-month', protect, async (req, res) => {
+  try {
+    // Obtém o mês e ano atual
+    const today = new Date();
+    const currentYear = today.getFullYear();
+    const currentMonth = today.getMonth() + 1; // getMonth() retorna 0-11
+    
+    // Formata as datas de início e fim do mês atual
+    const startDate = `${currentYear}-${String(currentMonth).padStart(2, '0')}-01`;
+    const lastDay = new Date(currentYear, currentMonth, 0).getDate(); // Último dia do mês atual
+    const endDate = `${currentYear}-${String(currentMonth).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+    
+    // Define o filtro base para o mês atual
+    let filter = {
+      date: { $gte: startDate, $lte: endDate },
+      status: { $in: ['approved', 'pending'] } // Considera horas aprovadas e pendentes
+    };
+    
+    // Se for funcionário comum, filtra apenas seus próprios registros
+    if (req.user.role === 'employee') {
+      filter.employeeId = req.user._id;
+    } else if (req.query.employeeId) { // Se for admin e especificou um funcionário
+      filter.employeeId = req.query.employeeId;
+    }
+    
+    // Busca os registros de horas extras
+    const overtimeRecords = await Overtime.find(filter)
+      .populate('employeeId', 'name overtimeLimit');
+    
+    // Se for funcionário comum ou admin que especificou um funcionário
+    if (req.user.role === 'employee' || req.query.employeeId) {
+      // Calcula o total de horas extras do mês
+      const totalHours = overtimeRecords.reduce((sum, record) => sum + record.hours, 0);
+      
+      // Busca o funcionário para obter o limite de horas extras
+      const employeeId = req.user.role === 'employee' ? req.user._id : req.query.employeeId;
+      const employee = await User.findById(employeeId).select('overtimeLimit overtimeExceptions');
+      
+      // Busca o limite padrão da empresa
+      const CompanySettings = mongoose.model('CompanySettings');
+      const settings = await CompanySettings.findOne();
+      const defaultLimit = settings?.defaultOvertimeLimit || 40;
+      
+      // Determina o limite aplicável (individual ou padrão)
+      const overtimeLimit = employee?.overtimeLimit || defaultLimit;
+      
+      // Verifica se há exceções para o mês atual
+      let additionalHours = 0;
+      if (employee?.overtimeExceptions && employee.overtimeExceptions.length > 0) {
+        const exception = employee.overtimeExceptions.find(
+          e => e.month === currentMonth && e.year === currentYear
+        );
+        if (exception) {
+          additionalHours = exception.additionalHours;
+        }
+      }
+      
+      // Calcula a porcentagem do limite utilizado
+      const effectiveLimit = overtimeLimit + additionalHours;
+      const limitPercentage = effectiveLimit > 0 ? 
+        (totalHours / effectiveLimit) * 100 : 0;
+      
+      return res.json({
+        totalHours,
+        overtimeLimit,
+        additionalHours,
+        effectiveLimit,
+        limitPercentage,
+        showWarning: limitPercentage >= 80 && limitPercentage < 100,
+        showAlert: limitPercentage >= 100
+      });
+    } 
+    // Se for admin e não especificou um funcionário, retorna dados de todos os funcionários
+    else {
+      // Agrupa os registros por funcionário
+      const employeeHours = {};
+      
+      for (const record of overtimeRecords) {
+        const empId = record.employeeId?._id.toString();
+        if (!empId) continue;
+        
+        if (!employeeHours[empId]) {
+          employeeHours[empId] = {
+            employeeId: empId,
+            employeeName: record.employeeId?.name || 'Funcionário não encontrado',
+            totalHours: 0,
+            overtimeLimit: record.employeeId?.overtimeLimit || null
+          };
+        }
+        
+        employeeHours[empId].totalHours += record.hours;
+      }
+      
+      // Converte para array
+      const result = Object.values(employeeHours);
+      
+      // Busca o limite padrão da empresa
+      const CompanySettings = mongoose.model('CompanySettings');
+      const settings = await CompanySettings.findOne();
+      const defaultLimit = settings?.defaultOvertimeLimit || 40;
+      
+      // Calcula a porcentagem do limite para cada funcionário
+      for (const emp of result) {
+        // Busca o funcionário para verificar exceções
+        const employee = await User.findById(emp.employeeId).select('overtimeExceptions');
+        
+        // Verifica se há exceções para o mês atual
+        let additionalHours = 0;
+        if (employee?.overtimeExceptions && employee.overtimeExceptions.length > 0) {
+          const exception = employee.overtimeExceptions.find(
+            e => e.month === currentMonth && e.year === currentYear
+          );
+          if (exception) {
+            additionalHours = exception.additionalHours;
+          }
+        }
+        
+        // Determina o limite aplicável (individual ou padrão)
+        const overtimeLimit = emp.overtimeLimit || defaultLimit;
+        
+        // Atualiza os dados do funcionário
+        emp.overtimeLimit = overtimeLimit;
+        emp.additionalHours = additionalHours;
+        emp.effectiveLimit = overtimeLimit + additionalHours;
+        emp.limitPercentage = overtimeLimit > 0 ? 
+          (emp.totalHours / emp.effectiveLimit) * 100 : 0;
+        emp.showWarning = emp.limitPercentage >= 80 && emp.limitPercentage < 100;
+        emp.showAlert = emp.limitPercentage >= 100;
+      }
+      
+      return res.json(result);
+    }
+  } catch (error) {
+    console.error('Erro ao calcular horas extras do mês atual:', error);
+    res.status(500).json({ message: 'Erro no servidor', error: error.message });
   }
 });
 
