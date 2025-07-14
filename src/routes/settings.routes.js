@@ -79,7 +79,7 @@ router.post('/logo', protect, admin, upload.single('logo'), async (req, res) => 
 // Atualizar configurações da empresa
 router.put('/', protect, admin, upload.single('logo'), async (req, res) => {
   try {
-    const { name, reportHeader, reportFooter } = req.body;
+    const { name, reportHeader, reportFooter, defaultOvertimeLimit } = req.body;
     let settings = await CompanySettings.findOne();
 
     if (!settings) {
@@ -90,6 +90,7 @@ router.put('/', protect, admin, upload.single('logo'), async (req, res) => {
     if (name) settings.name = name;
     if (reportHeader) settings.reportHeader = reportHeader;
     if (reportFooter) settings.reportFooter = reportFooter;
+    if (defaultOvertimeLimit !== undefined) settings.defaultOvertimeLimit = Number(defaultOvertimeLimit);
 
     // Atualiza o logo se foi enviado
     if (req.file) {
