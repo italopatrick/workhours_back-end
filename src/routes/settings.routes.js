@@ -25,6 +25,7 @@ router.get('/', protect, async (req, res) => {
       name: settings.name,
       reportHeader: settings.reportHeader,
       reportFooter: settings.reportFooter,
+      defaultOvertimeLimit: settings.defaultOvertimeLimit,
       hasLogo: !!settings.logo?.data
     };
 
