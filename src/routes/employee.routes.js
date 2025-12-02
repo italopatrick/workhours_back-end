@@ -205,4 +205,42 @@ router.delete('/:id/overtime-exception/:month/:year', protect, admin, async (req
   }
 });
 
+// Atualizar role de um funcionário (admin only)
+router.patch('/:id/role', protect, admin, async (req, res) => {
+  try {
+    const { role } = req.body;
+    
+    if (!role || !['admin', 'employee'].includes(role)) {
+      return res.status(400).json({ message: 'Role inválida. Use "admin" ou "employee"' });
+    }
+
+    const user = await User.findById(req.params.id);
+    if (!user) {
+      return res.status(404).json({ message: 'Funcionário não encontrado' });
+    }
+
+    // Não permite alterar a própria role
+    if (user._id.toString() === req.user._id.toString()) {
+      return res.status(400).json({ message: 'Você não pode alterar sua própria função' });
+    }
+
+    // Atualiza a role
+    user.role = role;
+    await user.save();
+
+    res.json({
+      id: user._id,
+      name: user.name,
+      email: user.email,
+      department: user.department,
+      role: user.role,
+      overtimeLimit: user.overtimeLimit,
+      overtimeExceptions: user.overtimeExceptions || []
+    });
+  } catch (error) {
+    console.error('Erro ao atualizar role do funcionário:', error);
+    res.status(500).json({ message: 'Erro no servidor', error: error.message });
+  }
+});
+
 export default router;

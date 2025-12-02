@@ -14,7 +14,7 @@ router.get('/', protect, async (req, res) => {
     // Se não existir, cria com valores padrão
     if (!settings) {
       settings = await CompanySettings.create({
-        name: 'Minha Empresa',
+        name: '',
         reportHeader: '',
         reportFooter: ''
       });
@@ -25,7 +25,9 @@ router.get('/', protect, async (req, res) => {
       name: settings.name,
       reportHeader: settings.reportHeader,
       reportFooter: settings.reportFooter,
-      defaultOvertimeLimit: settings.defaultOvertimeLimit,
+      defaultOvertimeLimit: settings.defaultOvertimeLimit || 40,
+      defaultAccumulationLimit: settings.defaultAccumulationLimit || 0,
+      defaultUsageLimit: settings.defaultUsageLimit || 0,
       hasLogo: !!settings.logo?.data
     };
 
@@ -80,7 +82,7 @@ router.post('/logo', protect, admin, upload.single('logo'), async (req, res) => 
 // Atualizar configurações da empresa
 router.put('/', protect, admin, upload.single('logo'), async (req, res) => {
   try {
-    const { name, reportHeader, reportFooter, defaultOvertimeLimit } = req.body;
+    const { name, reportHeader, reportFooter, defaultOvertimeLimit, defaultAccumulationLimit, defaultUsageLimit } = req.body;
     let settings = await CompanySettings.findOne();
 
     if (!settings) {
@@ -88,10 +90,12 @@ router.put('/', protect, admin, upload.single('logo'), async (req, res) => {
     }
 
     // Atualiza os campos de texto
-    if (name) settings.name = name;
-    if (reportHeader) settings.reportHeader = reportHeader;
-    if (reportFooter) settings.reportFooter = reportFooter;
+    if (name !== undefined) settings.name = name || '';
+    if (reportHeader !== undefined) settings.reportHeader = reportHeader;
+    if (reportFooter !== undefined) settings.reportFooter = reportFooter;
     if (defaultOvertimeLimit !== undefined) settings.defaultOvertimeLimit = Number(defaultOvertimeLimit);
+    if (defaultAccumulationLimit !== undefined) settings.defaultAccumulationLimit = Number(defaultAccumulationLimit);
+    if (defaultUsageLimit !== undefined) settings.defaultUsageLimit = Number(defaultUsageLimit);
 
     // Atualiza o logo se foi enviado
     if (req.file) {

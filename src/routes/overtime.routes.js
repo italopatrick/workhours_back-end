@@ -3,6 +3,8 @@ import mongoose from 'mongoose';
 import { protect, admin } from '../middleware/auth.js';
 import Overtime from '../models/Overtime.js';
 import User from '../models/User.js';
+import HourBankRecord from '../models/HourBankRecord.js';
+import { CompanySettings } from '../models/companySettings.js';
 import nodemailer from 'nodemailer';
 
 const router = express.Router();
@@ -210,6 +212,54 @@ router.post('/', protect, async (req, res) => {
     };
 
     console.log('Registro criado:', formattedOvertime);
+
+    // Se a hora extra foi criada como aprovada, cria crédito automaticamente
+    if (overtime.status === 'approved') {
+      try {
+        // Verificar limites
+        const settings = await CompanySettings.findOne();
+        const accumulationLimit = settings?.defaultAccumulationLimit || 0;
+
+        // Calcular saldo atual
+        const approvedRecords = await HourBankRecord.find({
+          employeeId: overtime.employeeId,
+          status: 'approved'
+        });
+
+        let currentBalance = 0;
+        approvedRecords.forEach(record => {
+          if (record.type === 'credit') {
+            currentBalance += record.hours;
+          } else {
+            currentBalance -= record.hours;
+          }
+        });
+
+        // Verificar limite de acúmulo (se configurado)
+        const totalAfterCredit = currentBalance + overtime.hours;
+        if (accumulationLimit > 0 && totalAfterCredit > accumulationLimit) {
+          console.warn(`Limite de acúmulo excedido para funcionário ${overtime.employeeId}. Saldo atual: ${currentBalance}h, Limite: ${accumulationLimit}h`);
+        } else {
+          // Criar crédito no banco de horas automaticamente
+          const hourBankCredit = new HourBankRecord({
+            employeeId: overtime.employeeId,
+            date: overtime.date,
+            type: 'credit',
+            hours: overtime.hours,
+            reason: `${overtime.reason} (via hora extra)`,
+            overtimeRecordId: overtime._id,
+            status: 'approved',
+            createdBy: req.user._id
+          });
+
+          await hourBankCredit.save();
+          console.log(`Crédito no banco de horas criado automaticamente para hora extra ${overtime._id}`);
+        }
+      } catch (error) {
+        console.error('Erro ao criar crédito no banco de horas automaticamente:', error);
+      }
+    }
+
     res.status(201).json(formattedOvertime);
   } catch (error) {
     console.error('Erro ao criar registro:', error);
@@ -225,13 +275,72 @@ router.patch('/:id', protect, admin, async (req, res) => {
       return res.status(404).json({ message: 'Registro de hora extra não encontrado' });
     }
 
+    const oldStatus = overtime.status;
+    const newStatus = req.body.status;
+
     // Atualiza apenas o status
-    overtime.status = req.body.status;
+    overtime.status = newStatus;
     const updatedOvertime = await Overtime.findByIdAndUpdate(
       req.params.id,
-      { status: req.body.status },
+      { status: newStatus },
       { new: true }
     ).populate('employeeId', 'name email');
+    
+    // Se a hora extra foi aprovada e não havia crédito no banco de horas, cria automaticamente
+    if (newStatus === 'approved' && oldStatus !== 'approved') {
+      try {
+        // Verificar se já existe crédito vinculado a esta hora extra
+        const existingCredit = await HourBankRecord.findOne({
+          overtimeRecordId: overtime._id
+        });
+
+        if (!existingCredit) {
+          // Buscar limites para validação
+          const settings = await CompanySettings.findOne();
+          const accumulationLimit = settings?.defaultAccumulationLimit || 0;
+
+          // Calcular saldo atual
+          const approvedRecords = await HourBankRecord.find({
+            employeeId: overtime.employeeId,
+            status: 'approved'
+          });
+
+          let currentBalance = 0;
+          approvedRecords.forEach(record => {
+            if (record.type === 'credit') {
+              currentBalance += record.hours;
+            } else {
+              currentBalance -= record.hours;
+            }
+          });
+
+          // Verificar limite de acúmulo (se configurado)
+          const totalAfterCredit = currentBalance + overtime.hours;
+          if (accumulationLimit > 0 && totalAfterCredit > accumulationLimit) {
+            console.warn(`Limite de acúmulo excedido para funcionário ${overtime.employeeId}. Saldo atual: ${currentBalance}h, Limite: ${accumulationLimit}h`);
+            // Não cria o crédito se exceder o limite, mas continua a aprovação da hora extra
+          } else {
+            // Criar crédito no banco de horas automaticamente
+            const hourBankCredit = new HourBankRecord({
+              employeeId: overtime.employeeId,
+              date: overtime.date,
+              type: 'credit',
+              hours: overtime.hours,
+              reason: `${overtime.reason} (via hora extra aprovada)`,
+              overtimeRecordId: overtime._id,
+              status: 'approved', // Aprovado automaticamente quando a hora extra é aprovada
+              createdBy: req.user._id
+            });
+
+            await hourBankCredit.save();
+            console.log(`Crédito no banco de horas criado automaticamente para hora extra ${overtime._id}`);
+          }
+        }
+      } catch (error) {
+        // Log do erro mas não impede a aprovação da hora extra
+        console.error('Erro ao criar crédito no banco de horas automaticamente:', error);
+      }
+    }
     
     // Formata a resposta no mesmo formato que o GET
     const formattedOvertime = {

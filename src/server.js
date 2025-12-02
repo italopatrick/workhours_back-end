@@ -7,6 +7,7 @@ import employeeRoutes from './routes/employee.routes.js';
 import overtimeRoutes from './routes/overtime.routes.js';
 import reportRoutes from './routes/report.routes.js';
 import settingsRoutes from './routes/settings.routes.js';
+import hourBankRoutes from './routes/hourBank.routes.js';
 
 dotenv.config();
 
@@ -59,6 +60,7 @@ app.use('/api/employees', employeeRoutes);
 app.use('/api/overtime', overtimeRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/settings', settingsRoutes);
+app.use('/api/hour-bank', hourBankRoutes);
 
 const PORT = process.env.PORT || 5000;
 const HOST = process.env.HOST || '0.0.0.0';
