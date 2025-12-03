@@ -63,12 +63,11 @@ const corsOptions = {
     if (allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
-      // Permite temporariamente para debug, mas loga
-      logger.warn('CORS: Origin não configurada, mas permitindo', { 
+      logger.warn('CORS: Origin bloqueada - não está na lista permitida', { 
         origin, 
         allowedOrigins
       });
-      callback(null, true);
+      callback(new Error('Not allowed by CORS'));
     }
   },
   credentials: true,

@@ -423,6 +423,18 @@ router.patch('/records/:id/status', protect, admin, async (req, res) => {
       }
     }
 
+    // Se está aprovando um débito, verificar saldo disponível
+    if (status === 'approved' && record.type === 'debit') {
+      const balance = await calculateBalance(record.employeeId.toString());
+      if (balance.availableBalance < record.hours) {
+        return res.status(400).json({
+          error: `Saldo insuficiente. Saldo disponível: ${balance.availableBalance}h, Débito: ${record.hours}h`,
+          canProceed: false,
+          availableBalance: balance.availableBalance
+        });
+      }
+    }
+
     // Preparar campos de atualização
     const updateData = { status };
     if (status === 'approved') {
@@ -463,18 +475,6 @@ router.patch('/records/:id/status', protect, admin, async (req, res) => {
       },
       ...requestMeta
     });
-
-    // Se está aprovando um débito, verificar saldo disponível
-    if (status === 'approved' && record.type === 'debit') {
-      const balance = await calculateBalance(record.employeeId.toString());
-      if (balance.availableBalance < record.hours) {
-        return res.status(400).json({
-          error: `Saldo insuficiente. Saldo disponível: ${balance.availableBalance}h, Débito: ${record.hours}h`,
-          canProceed: false,
-          availableBalance: balance.availableBalance
-        });
-      }
-    }
 
     // Popular campos relacionados para resposta
     await updatedRecord.populate('createdBy', 'name email');

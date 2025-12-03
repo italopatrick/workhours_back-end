@@ -364,7 +364,7 @@ router.post('/link-external-account', async (req, res) => {
         },
       });
     } catch (error) {
-      logger.logError(error, { context: 'Validar token externo', login });
+      logger.logError(error, { context: 'Validar token externo', email: email || req.body?.email || 'unknown' });
       return res.status(401).json({ message: 'Erro ao validar token externo' });
     }
   } catch (error) {

@@ -117,11 +117,11 @@ router.get('/my', protect, async (req, res) => {
 // Create new overtime record
 router.post('/', protect, async (req, res) => {
   try {
-    logger.debug('Dados de criação de hora extra recebidos', { employeeId, userId: req.user?._id });
     const { date, startTime, endTime, reason } = req.body;
     
     // Se for admin, usa o employeeId do body, senão usa o id do usuário logado
     const employeeId = req.user.role === 'admin' ? req.body.employeeId : req.user._id;
+    logger.debug('Dados de criação de hora extra recebidos', { employeeId, userId: req.user?._id });
 
     // Busca o funcionário para pegar o nome e limite de horas extras
     const employee = await User.findById(employeeId);
@@ -605,7 +605,7 @@ router.post('/send-report', protect, async (req, res) => {
 
     res.json({ message: 'Email enviado com sucesso' });
   } catch (error) {
-    logger.logError(error, { context: 'Enviar email de relatório', employeeId, startDate, endDate });
+    logger.logError(error, { context: 'Enviar email de relatório', employeeName, managerEmail, startDate, endDate, userId: req.user?._id });
     res.status(500).json({ message: 'Erro ao enviar email' });
   }
 });
