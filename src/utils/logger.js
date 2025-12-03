@@ -20,22 +20,25 @@ const consoleFormat = winston.format.combine(
   winston.format.printf(({ timestamp, level, message, ...meta }) => {
     let msg = `${timestamp} [${level}]: ${message}`;
     
-    // Adicionar metadados se existirem
-    const metaKeys = Object.keys(meta).filter(key => key !== 'splat' && key !== 'Symbol(level)' && key !== 'Symbol(message)');
+    // Adicionar metadados se existirem (filtrar campos internos do winston)
+    const metaKeys = Object.keys(meta).filter(
+      key => !key.startsWith('Symbol') && key !== 'splat' && key !== 'level' && key !== 'message'
+    );
     if (metaKeys.length > 0) {
       const metaObj = {};
       metaKeys.forEach(key => {
         metaObj[key] = meta[key];
       });
-      const metaStr = JSON.stringify(metaObj, null, 2);
-      msg += `\n${metaStr}`;
+      if (Object.keys(metaObj).length > 0) {
+        msg += `\n${JSON.stringify(metaObj, null, 2)}`;
+      }
     }
     
     return msg;
   })
 );
 
-// Configurar transportes - começa apenas com console
+// Configurar transportes - sempre começa com console
 const transports = [
   new winston.transports.Console({
     format: consoleFormat,
@@ -43,7 +46,7 @@ const transports = [
   })
 ];
 
-// Tentar adicionar transportes de arquivo apenas se o diretório for acessível
+// Tentar adicionar transportes de arquivo apenas se for possível
 try {
   const logsDir = path.join(__dirname, '../../logs');
   
@@ -52,7 +55,7 @@ try {
     fs.mkdirSync(logsDir, { recursive: true });
   }
   
-  // Verificar se podemos escrever no diretório
+  // Verificar se podemos escrever
   fs.accessSync(logsDir, fs.constants.W_OK);
   
   // Adicionar transportes de arquivo
@@ -61,19 +64,21 @@ try {
       filename: path.join(logsDir, 'error.log'),
       level: 'error',
       format: logFormat,
-      maxsize: 5242880, // 5MB
+      maxsize: 5242880,
       maxFiles: 5
-    }),
+    })
+  );
+  
+  transports.push(
     new winston.transports.File({
       filename: path.join(logsDir, 'combined.log'),
       format: logFormat,
-      maxsize: 5242880, // 5MB
+      maxsize: 5242880,
       maxFiles: 10
     })
   );
 } catch (error) {
-  // Se não conseguir criar/usar arquivos, continua apenas com console
-  // Não loga erro aqui para evitar loop
+  // Se falhar, continua apenas com console (silenciosamente)
 }
 
 // Criar instância do logger
@@ -84,8 +89,8 @@ const logger = winston.createLogger({
   exitOnError: false
 });
 
-// Métodos auxiliares para facilitar o uso
-logger.logRequest = (req, message = '') => {
+// Métodos auxiliares (sem criar referências circulares)
+logger.logRequest = function(req, message = '') {
   const logData = {
     method: req.method,
     url: req.originalUrl || req.url,
@@ -95,21 +100,21 @@ logger.logRequest = (req, message = '') => {
     message
   };
   
-  logger.info(message || `${req.method} ${req.originalUrl || req.url}`, logData);
+  this.info(message || `${req.method} ${req.originalUrl || req.url}`, logData);
 };
 
-logger.logError = (error, context = {}) => {
+logger.logError = function(error, context = {}) {
   const errorData = {
-    message: error.message,
-    stack: error.stack,
+    message: error?.message || String(error),
+    stack: error?.stack,
     ...context
   };
   
-  logger.error(error.message, errorData);
+  this.error(error?.message || String(error), errorData);
 };
 
-logger.logAuth = (action, user, details = {}) => {
-  logger.info(`Auth: ${action}`, {
+logger.logAuth = function(action, user, details = {}) {
+  this.info(`Auth: ${action}`, {
     action,
     userId: user?._id || user?.id,
     userEmail: user?.email,
@@ -118,8 +123,8 @@ logger.logAuth = (action, user, details = {}) => {
   });
 };
 
-logger.logDatabase = (operation, collection, details = {}) => {
-  logger.debug(`DB: ${operation}`, {
+logger.logDatabase = function(operation, collection, details = {}) {
+  this.debug(`DB: ${operation}`, {
     operation,
     collection,
     ...details
