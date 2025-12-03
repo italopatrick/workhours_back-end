@@ -113,8 +113,5 @@ logger.logDatabase = (operation, collection, details = {}) => {
   });
 };
 
-// Método log como alias para info (sem criar referência circular)
-logger.log = (message, meta) => logger.info(message, meta);
-
 export default logger;
 
