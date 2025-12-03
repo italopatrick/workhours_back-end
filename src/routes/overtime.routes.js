@@ -5,6 +5,9 @@ import Overtime from '../models/Overtime.js';
 import User from '../models/User.js';
 import HourBankRecord from '../models/HourBankRecord.js';
 import { CompanySettings } from '../models/companySettings.js';
+import { logAudit, getRequestMetadata } from '../middleware/audit.js';
+import { formatDateForDisplay } from '../utils/dateFormatter.js';
+import logger from '../utils/logger.js';
 import nodemailer from 'nodemailer';
 
 const router = express.Router();
@@ -49,7 +52,7 @@ const formatHoursForDisplay = (hours) => {
 router.get('/', protect, async (req, res) => {
   try {
     const { startDate, endDate, employeeId } = req.query;
-    console.log('Buscando registros:', { startDate, endDate, employeeId });
+    logger.debug('Buscando registros de horas extras', { startDate, endDate, employeeId, userId: req.user?._id });
 
     // Cria o filtro base
     let filter = {};
@@ -69,14 +72,14 @@ router.get('/', protect, async (req, res) => {
       filter.employeeId = employeeId;
     }
 
-    console.log('Filtro final:', filter);
+    logger.debug('Filtro aplicado', { filter, userId: req.user?._id });
 
     // Busca os registros
     const records = await Overtime.find(filter)
       .populate('employeeId', 'name')
       .sort({ date: -1 });
 
-    console.log('Registros encontrados:', records.length);
+    logger.debug('Registros encontrados', { count: records.length, userId: req.user?._id });
 
     // Formata os registros para o frontend
     const formattedRecords = records.map(record => ({
@@ -91,10 +94,10 @@ router.get('/', protect, async (req, res) => {
       status: record.status
     }));
 
-    console.log('Registros formatados:', formattedRecords);
+    logger.debug('Registros formatados para resposta', { count: formattedRecords.length });
     res.json(formattedRecords);
   } catch (error) {
-    console.error('Erro ao buscar registros:', error);
+    logger.logError(error, { context: 'Buscar registros de horas extras', userId: req.user?._id });
     res.status(500).json({ message: 'Erro ao buscar registros', error: error.message });
   }
 });
@@ -106,7 +109,7 @@ router.get('/my', protect, async (req, res) => {
       .sort({ date: -1 });
     res.json(overtime);
   } catch (error) {
-    console.error('Error getting my overtime records:', error);
+    logger.logError(error, { context: 'Buscar minhas horas extras', userId: req.user?._id });
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 });
@@ -114,7 +117,7 @@ router.get('/my', protect, async (req, res) => {
 // Create new overtime record
 router.post('/', protect, async (req, res) => {
   try {
-    console.log('Dados recebidos:', req.body);
+    logger.debug('Dados de criação de hora extra recebidos', { employeeId, userId: req.user?._id });
     const { date, startTime, endTime, reason } = req.body;
     
     // Se for admin, usa o employeeId do body, senão usa o id do usuário logado
@@ -192,7 +195,26 @@ router.post('/', protect, async (req, res) => {
       endTime,
       hours,
       reason,
-      status: 'pending'
+      status: 'pending',
+      createdBy: req.user._id
+    });
+
+    // Registrar log de auditoria
+    const requestMeta = getRequestMetadata(req);
+    await logAudit({
+      action: 'overtime_created',
+      entityType: 'overtime',
+      entityId: overtime._id,
+      userId: req.user._id,
+      targetUserId: employeeId,
+      description: `Hora extra criada: ${hours}h em ${formatDateForDisplay(date)} - ${reason}`,
+      metadata: {
+        hours,
+        date,
+        startTime,
+        endTime
+      },
+      ...requestMeta
     });
 
     // Popula os dados do funcionário e formata a resposta
@@ -211,7 +233,7 @@ router.post('/', protect, async (req, res) => {
       status: populatedOvertime.status
     };
 
-    console.log('Registro criado:', formattedOvertime);
+    logger.info('Registro de hora extra criado', { overtimeId: formattedOvertime.id, employeeId, hours, userId: req.user?._id });
 
     // Se a hora extra foi criada como aprovada, cria crédito automaticamente
     if (overtime.status === 'approved') {
@@ -238,7 +260,7 @@ router.post('/', protect, async (req, res) => {
         // Verificar limite de acúmulo (se configurado)
         const totalAfterCredit = currentBalance + overtime.hours;
         if (accumulationLimit > 0 && totalAfterCredit > accumulationLimit) {
-          console.warn(`Limite de acúmulo excedido para funcionário ${overtime.employeeId}. Saldo atual: ${currentBalance}h, Limite: ${accumulationLimit}h`);
+          logger.warn('Limite de acúmulo excedido', { employeeId: overtime.employeeId, currentBalance, accumulationLimit });
         } else {
           // Criar crédito no banco de horas automaticamente
           const hourBankCredit = new HourBankRecord({
@@ -253,16 +275,16 @@ router.post('/', protect, async (req, res) => {
           });
 
           await hourBankCredit.save();
-          console.log(`Crédito no banco de horas criado automaticamente para hora extra ${overtime._id}`);
+          logger.info('Crédito no banco de horas criado automaticamente', { overtimeId: overtime._id, employeeId: overtime.employeeId });
         }
       } catch (error) {
-        console.error('Erro ao criar crédito no banco de horas automaticamente:', error);
+        logger.logError(error, { context: 'Criar crédito no banco de horas automaticamente', overtimeId: overtime._id });
       }
     }
 
     res.status(201).json(formattedOvertime);
   } catch (error) {
-    console.error('Erro ao criar registro:', error);
+    logger.logError(error, { context: 'Criar registro de hora extra', employeeId, userId: req.user?._id });
     res.status(500).json({ message: 'Erro ao criar registro', error: error.message });
   }
 });
@@ -278,13 +300,48 @@ router.patch('/:id', protect, admin, async (req, res) => {
     const oldStatus = overtime.status;
     const newStatus = req.body.status;
 
-    // Atualiza apenas o status
-    overtime.status = newStatus;
+    // Preparar campos de atualização
+    const updateData = { status: newStatus };
+    
+    if (newStatus === 'approved' && oldStatus !== 'approved') {
+      updateData.approvedBy = req.user._id;
+      updateData.approvedAt = new Date();
+      updateData.rejectedBy = null;
+      updateData.rejectedAt = null;
+    } else if (newStatus === 'rejected' && oldStatus !== 'rejected') {
+      updateData.rejectedBy = req.user._id;
+      updateData.rejectedAt = new Date();
+      updateData.approvedBy = null;
+      updateData.approvedAt = null;
+    }
+
+    // Atualiza o status e campos de auditoria
     const updatedOvertime = await Overtime.findByIdAndUpdate(
       req.params.id,
-      { status: newStatus },
+      updateData,
       { new: true }
     ).populate('employeeId', 'name email');
+
+    // Registrar log de auditoria para aprovação/rejeição
+    if ((newStatus === 'approved' && oldStatus !== 'approved') || (newStatus === 'rejected' && oldStatus !== 'rejected')) {
+      const requestMeta = getRequestMetadata(req);
+      const actionName = newStatus === 'approved' ? 'overtime_approved' : 'overtime_rejected';
+      await logAudit({
+        action: actionName,
+        entityType: 'overtime',
+        entityId: overtime._id,
+        userId: req.user._id,
+        targetUserId: overtime.employeeId,
+        description: `Hora extra ${newStatus === 'approved' ? 'aprovada' : 'rejeitada'}: ${overtime.hours}h em ${formatDateForDisplay(overtime.date)}`,
+        metadata: {
+          hours: overtime.hours,
+          date: overtime.date,
+          previousStatus: oldStatus,
+          newStatus: newStatus
+        },
+        ...requestMeta
+      });
+    }
     
     // Se a hora extra foi aprovada e não havia crédito no banco de horas, cria automaticamente
     if (newStatus === 'approved' && oldStatus !== 'approved') {
@@ -317,7 +374,7 @@ router.patch('/:id', protect, admin, async (req, res) => {
           // Verificar limite de acúmulo (se configurado)
           const totalAfterCredit = currentBalance + overtime.hours;
           if (accumulationLimit > 0 && totalAfterCredit > accumulationLimit) {
-            console.warn(`Limite de acúmulo excedido para funcionário ${overtime.employeeId}. Saldo atual: ${currentBalance}h, Limite: ${accumulationLimit}h`);
+            logger.warn('Limite de acúmulo excedido', { employeeId: overtime.employeeId, currentBalance, accumulationLimit });
             // Não cria o crédito se exceder o limite, mas continua a aprovação da hora extra
           } else {
             // Criar crédito no banco de horas automaticamente
@@ -329,16 +386,38 @@ router.patch('/:id', protect, admin, async (req, res) => {
               reason: `${overtime.reason} (via hora extra aprovada)`,
               overtimeRecordId: overtime._id,
               status: 'approved', // Aprovado automaticamente quando a hora extra é aprovada
-              createdBy: req.user._id
+              createdBy: req.user._id,
+              approvedBy: req.user._id, // Admin que aprovou a hora extra também aprova o crédito
+              approvedAt: new Date()
             });
 
             await hourBankCredit.save();
-            console.log(`Crédito no banco de horas criado automaticamente para hora extra ${overtime._id}`);
+            
+            // Registrar log de auditoria para o crédito criado automaticamente
+            const requestMeta = getRequestMetadata(req);
+            await logAudit({
+              action: 'hourbank_credit_created',
+              entityType: 'hourbank',
+              entityId: hourBankCredit._id,
+              userId: req.user._id,
+              targetUserId: overtime.employeeId,
+              description: `Crédito no banco de horas criado automaticamente via hora extra aprovada: ${overtime.hours}h em ${formatDateForDisplay(overtime.date)}`,
+              metadata: {
+                hours: overtime.hours,
+                date: overtime.date,
+                type: 'credit',
+                overtimeRecordId: overtime._id,
+                autoCreated: true
+              },
+              ...requestMeta
+            });
+            
+            logger.info('Crédito no banco de horas criado automaticamente', { overtimeId: overtime._id, employeeId: overtime.employeeId });
           }
         }
       } catch (error) {
         // Log do erro mas não impede a aprovação da hora extra
-        console.error('Erro ao criar crédito no banco de horas automaticamente:', error);
+        logger.logError(error, { context: 'Criar crédito no banco de horas automaticamente', overtimeId: overtime._id });
       }
     }
     
@@ -357,7 +436,7 @@ router.patch('/:id', protect, admin, async (req, res) => {
 
     res.json(formattedOvertime);
   } catch (error) {
-    console.error('Error updating overtime status:', error);
+    logger.logError(error, { context: 'Atualizar status de hora extra', overtimeId: req.params.id, userId: req.user?._id });
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 });
@@ -496,7 +575,7 @@ router.get('/current-month', protect, async (req, res) => {
       return res.json(result);
     }
   } catch (error) {
-    console.error('Erro ao calcular horas extras do mês atual:', error);
+    logger.logError(error, { context: 'Calcular horas extras do mês atual', employeeId, month: currentMonth, year: currentYear });
     res.status(500).json({ message: 'Erro no servidor', error: error.message });
   }
 });
@@ -526,7 +605,7 @@ router.post('/send-report', protect, async (req, res) => {
 
     res.json({ message: 'Email enviado com sucesso' });
   } catch (error) {
-    console.error('Erro ao enviar email:', error);
+    logger.logError(error, { context: 'Enviar email de relatório', employeeId, startDate, endDate });
     res.status(500).json({ message: 'Erro ao enviar email' });
   }
 });

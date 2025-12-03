@@ -4,6 +4,9 @@ import HourBankRecord from '../models/HourBankRecord.js';
 import User from '../models/User.js';
 import Overtime from '../models/Overtime.js';
 import { CompanySettings } from '../models/companySettings.js';
+import { logAudit, getRequestMetadata } from '../middleware/audit.js';
+import { formatDateForDisplay } from '../utils/dateFormatter.js';
+import logger from '../utils/logger.js';
 import mongoose from 'mongoose';
 
 const router = express.Router();
@@ -97,7 +100,7 @@ router.get('/balance', protect, async (req, res) => {
       usageLimitPercentage: Math.min(100, Math.max(0, usageLimitPercentage))
     });
   } catch (error) {
-    console.error('Erro ao buscar saldo do banco de horas:', error);
+    logger.logError(error, { context: 'Buscar saldo do banco de horas', employeeId: req.query.employeeId });
     res.status(500).json({ error: 'Erro ao buscar saldo do banco de horas' });
   }
 });
@@ -160,7 +163,7 @@ router.get('/records', protect, async (req, res) => {
 
     res.json(formattedRecords);
   } catch (error) {
-    console.error('Erro ao buscar registros do banco de horas:', error);
+    logger.logError(error, { context: 'Buscar registros do banco de horas', employeeId: req.query.employeeId });
     res.status(500).json({ error: 'Erro ao buscar registros do banco de horas' });
   }
 });
@@ -221,6 +224,24 @@ router.post('/credit', protect, async (req, res) => {
 
     await record.save();
 
+    // Registrar log de auditoria
+    const requestMeta = getRequestMetadata(req);
+    await logAudit({
+      action: 'hourbank_credit_created',
+      entityType: 'hourbank',
+      entityId: record._id,
+      userId: req.user._id,
+      targetUserId: employeeId,
+      description: `Crédito no banco de horas criado: ${hours}h em ${formatDateForDisplay(date)}`,
+      metadata: {
+        hours,
+        date,
+        type: 'credit',
+        overtimeRecordId: overtimeRecordId || null
+      },
+      ...requestMeta
+    });
+
     // Popular campos relacionados
     await record.populate('employeeId', 'name email');
     await record.populate('createdBy', 'name email');
@@ -241,7 +262,7 @@ router.post('/credit', protect, async (req, res) => {
       updatedAt: record.updatedAt
     });
   } catch (error) {
-    console.error('Erro ao criar crédito no banco de horas:', error);
+    logger.logError(error, { context: 'Criar crédito no banco de horas', employeeId, userId: req.user?._id });
     res.status(500).json({ error: 'Erro ao criar crédito no banco de horas' });
   }
 });
@@ -309,10 +330,30 @@ router.post('/debit', protect, admin, async (req, res) => {
       hours: Number(hours),
       reason,
       status: 'approved', // Aprovado automaticamente quando criado por admin
-      createdBy: req.user._id
+      createdBy: req.user._id,
+      approvedBy: req.user._id, // Admin que criou já aprova
+      approvedAt: new Date()
     });
 
     await record.save();
+
+    // Registrar log de auditoria
+    const requestMeta = getRequestMetadata(req);
+    await logAudit({
+      action: 'hourbank_debit_created',
+      entityType: 'hourbank',
+      entityId: record._id,
+      userId: req.user._id,
+      targetUserId: employeeId,
+      description: `Débito/compensação no banco de horas criado: ${hours}h em ${formatDateForDisplay(date)} - ${reason}`,
+      metadata: {
+        hours,
+        date,
+        type: 'debit',
+        reason
+      },
+      ...requestMeta
+    });
 
     // Popular campos relacionados
     await record.populate('employeeId', 'name email');
@@ -333,7 +374,7 @@ router.post('/debit', protect, admin, async (req, res) => {
       updatedAt: record.updatedAt
     });
   } catch (error) {
-    console.error('Erro ao criar débito no banco de horas:', error);
+    logger.logError(error, { context: 'Criar débito no banco de horas', employeeId, userId: req.user?._id });
     res.status(500).json({ error: 'Erro ao criar débito no banco de horas' });
   }
 });
@@ -354,6 +395,8 @@ router.patch('/records/:id/status', protect, admin, async (req, res) => {
     if (!record) {
       return res.status(404).json({ error: 'Registro não encontrado' });
     }
+
+    const oldStatus = record.status;
 
     // Apenas registros pendentes podem ser aprovados/rejeitados
     if (record.status !== 'pending') {
@@ -380,6 +423,47 @@ router.patch('/records/:id/status', protect, admin, async (req, res) => {
       }
     }
 
+    // Preparar campos de atualização
+    const updateData = { status };
+    if (status === 'approved') {
+      updateData.approvedBy = req.user._id;
+      updateData.approvedAt = new Date();
+      updateData.rejectedBy = null;
+      updateData.rejectedAt = null;
+    } else if (status === 'rejected') {
+      updateData.rejectedBy = req.user._id;
+      updateData.rejectedAt = new Date();
+      updateData.approvedBy = null;
+      updateData.approvedAt = null;
+    }
+
+    // Atualizar registro
+    const updatedRecord = await HourBankRecord.findByIdAndUpdate(
+      id,
+      updateData,
+      { new: true }
+    ).populate('employeeId', 'name email');
+
+    // Registrar log de auditoria
+    const requestMeta = getRequestMetadata(req);
+    const actionName = status === 'approved' ? 'hourbank_approved' : 'hourbank_rejected';
+    await logAudit({
+      action: actionName,
+      entityType: 'hourbank',
+      entityId: record._id,
+      userId: req.user._id,
+      targetUserId: record.employeeId,
+      description: `Registro de banco de horas ${status === 'approved' ? 'aprovado' : 'rejeitado'}: ${record.hours}h (${record.type}) em ${formatDateForDisplay(record.date)}`,
+      metadata: {
+        hours: record.hours,
+        date: record.date,
+        type: record.type,
+        previousStatus: oldStatus,
+        newStatus: status
+      },
+      ...requestMeta
+    });
+
     // Se está aprovando um débito, verificar saldo disponível
     if (status === 'approved' && record.type === 'debit') {
       const balance = await calculateBalance(record.employeeId.toString());
@@ -392,29 +476,29 @@ router.patch('/records/:id/status', protect, admin, async (req, res) => {
       }
     }
 
-    record.status = status;
-    await record.save();
-
-    // Popular campos relacionados
-    await record.populate('employeeId', 'name email');
-    await record.populate('createdBy', 'name email');
+    // Popular campos relacionados para resposta
+    await updatedRecord.populate('createdBy', 'name email');
 
     res.json({
-      id: record._id,
-      employeeId: record.employeeId._id,
-      employeeName: record.employeeId.name,
-      date: record.date,
-      type: record.type,
-      hours: record.hours,
-      reason: record.reason,
-      status: record.status,
-      createdBy: record.createdBy._id,
-      createdByName: record.createdBy.name,
-      createdAt: record.createdAt,
-      updatedAt: record.updatedAt
+      id: updatedRecord._id,
+      employeeId: updatedRecord.employeeId._id,
+      employeeName: updatedRecord.employeeId.name,
+      date: updatedRecord.date,
+      type: updatedRecord.type,
+      hours: updatedRecord.hours,
+      reason: updatedRecord.reason,
+      status: updatedRecord.status,
+      createdBy: updatedRecord.createdBy._id,
+      createdByName: updatedRecord.createdBy.name,
+      approvedBy: updatedRecord.approvedBy || null,
+      rejectedBy: updatedRecord.rejectedBy || null,
+      approvedAt: updatedRecord.approvedAt || null,
+      rejectedAt: updatedRecord.rejectedAt || null,
+      createdAt: updatedRecord.createdAt,
+      updatedAt: updatedRecord.updatedAt
     });
   } catch (error) {
-    console.error('Erro ao atualizar status do registro:', error);
+    logger.logError(error, { context: 'Atualizar status do registro do banco de horas', recordId: id, userId: req.user?._id });
     res.status(500).json({ error: 'Erro ao atualizar status do registro' });
   }
 });
@@ -501,7 +585,7 @@ router.get('/limits', protect, async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Erro ao verificar limites:', error);
+    logger.logError(error, { context: 'Verificar limites do banco de horas', employeeId: req.query.employeeId });
     res.status(500).json({ error: 'Erro ao verificar limites' });
   }
 });

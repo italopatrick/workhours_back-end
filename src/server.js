@@ -8,6 +8,9 @@ import overtimeRoutes from './routes/overtime.routes.js';
 import reportRoutes from './routes/report.routes.js';
 import settingsRoutes from './routes/settings.routes.js';
 import hourBankRoutes from './routes/hourBank.routes.js';
+import auditRoutes from './routes/audit.routes.js';
+import logger from './utils/logger.js';
+import { requestLogger } from './middleware/requestLogger.js';
 
 dotenv.config();
 
@@ -17,6 +20,9 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// Request logging middleware (antes das rotas)
+app.use(requestLogger);
+
 // Database connection
 const connectDB = async () => {
   try {
@@ -24,9 +30,9 @@ const connectDB = async () => {
       useNewUrlParser: true,
       useUnifiedTopology: true,
     });
-    console.log(`MongoDB Connected: ${conn.connection.host}`);
+    logger.info('MongoDB Connected', { host: conn.connection.host });
   } catch (error) {
-    console.error(`MongoDB Connection Error: ${error.message}`);
+    logger.logError(error, { context: 'MongoDB Connection' });
     process.exit(1);
   }
 };
@@ -61,12 +67,26 @@ app.use('/api/overtime', overtimeRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/hour-bank', hourBankRoutes);
+app.use('/api/audit', auditRoutes);
 
 const PORT = process.env.PORT || 5000;
 const HOST = process.env.HOST || '0.0.0.0';
 
 app.listen(PORT, HOST, () => {
-  console.log(`Server is running on ${HOST}:${PORT}`);
-  console.log(`Environment: ${process.env.NODE_ENV}`);
-  console.log(`MongoDB URI: ${process.env.MONGODB_URI ? 'Connected' : 'Not configured'}`);
+  logger.info('Server started', {
+    host: HOST,
+    port: PORT,
+    environment: process.env.NODE_ENV || 'development',
+    mongodb: process.env.MONGODB_URI ? 'Connected' : 'Not configured'
+  });
+});
+
+// Tratamento de erros não capturados
+process.on('unhandledRejection', (error) => {
+  logger.logError(error, { context: 'Unhandled Rejection' });
+});
+
+process.on('uncaughtException', (error) => {
+  logger.logError(error, { context: 'Uncaught Exception' });
+  process.exit(1);
 });

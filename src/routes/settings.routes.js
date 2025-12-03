@@ -2,6 +2,8 @@ import express from 'express';
 import multer from 'multer';
 import { protect, admin } from '../middleware/auth.js';
 import { CompanySettings } from '../models/companySettings.js';
+import { logAudit, getRequestMetadata } from '../middleware/audit.js';
+import logger from '../utils/logger.js';
 
 const router = express.Router();
 const upload = multer();
@@ -33,7 +35,7 @@ router.get('/', protect, async (req, res) => {
 
     res.json(response);
   } catch (error) {
-    console.error('Erro ao obter configurações:', error);
+    logger.logError(error, { context: 'Obter configurações da empresa' });
     res.status(500).json({ message: 'Erro ao obter configurações' });
   }
 });
@@ -49,7 +51,7 @@ router.get('/logo', protect, async (req, res) => {
     res.set('Content-Type', settings.logo.contentType);
     res.send(settings.logo.data);
   } catch (error) {
-    console.error('Erro ao obter logo:', error);
+    logger.logError(error, { context: 'Obter logo da empresa' });
     res.status(500).json({ message: 'Erro ao obter logo' });
   }
 });
@@ -72,9 +74,25 @@ router.post('/logo', protect, admin, upload.single('logo'), async (req, res) => 
     };
 
     await settings.save();
+    
+    // Registrar log de auditoria
+    const requestMeta = getRequestMetadata(req);
+    await logAudit({
+      action: 'settings_logo_updated',
+      entityType: 'settings',
+      entityId: settings._id,
+      userId: req.user._id,
+      description: `Logo da empresa atualizada`,
+      metadata: {
+        contentType: req.file.mimetype,
+        fileSize: req.file.size
+      },
+      ...requestMeta
+    });
+
     res.json({ message: 'Logo atualizada com sucesso' });
   } catch (error) {
-    console.error('Erro ao fazer upload da logo:', error);
+    logger.logError(error, { context: 'Upload de logo', userId: req.user?._id });
     res.status(500).json({ message: 'Erro ao fazer upload da logo' });
   }
 });
@@ -89,6 +107,17 @@ router.put('/', protect, admin, upload.single('logo'), async (req, res) => {
       settings = new CompanySettings();
     }
 
+    // Salvar valores antigos para auditoria
+    const oldValues = {
+      name: settings.name,
+      reportHeader: settings.reportHeader,
+      reportFooter: settings.reportFooter,
+      defaultOvertimeLimit: settings.defaultOvertimeLimit,
+      defaultAccumulationLimit: settings.defaultAccumulationLimit,
+      defaultUsageLimit: settings.defaultUsageLimit,
+      hasLogo: !!settings.logo?.data
+    };
+
     // Atualiza os campos de texto
     if (name !== undefined) settings.name = name || '';
     if (reportHeader !== undefined) settings.reportHeader = reportHeader;
@@ -98,17 +127,45 @@ router.put('/', protect, admin, upload.single('logo'), async (req, res) => {
     if (defaultUsageLimit !== undefined) settings.defaultUsageLimit = Number(defaultUsageLimit);
 
     // Atualiza o logo se foi enviado
+    let logoUpdated = false;
     if (req.file) {
       settings.logo = {
         data: req.file.buffer,
         contentType: req.file.mimetype
       };
+      logoUpdated = true;
     }
 
     await settings.save();
+    
+    // Registrar log de auditoria
+    const requestMeta = getRequestMetadata(req);
+    const action = logoUpdated ? 'settings_updated' : 'settings_updated';
+    await logAudit({
+      action,
+      entityType: 'settings',
+      entityId: settings._id,
+      userId: req.user._id,
+      description: `Configurações da empresa atualizadas${logoUpdated ? ' (incluindo logo)' : ''}`,
+      metadata: {
+        oldValues,
+        newValues: {
+          name: settings.name,
+          reportHeader: settings.reportHeader,
+          reportFooter: settings.reportFooter,
+          defaultOvertimeLimit: settings.defaultOvertimeLimit,
+          defaultAccumulationLimit: settings.defaultAccumulationLimit,
+          defaultUsageLimit: settings.defaultUsageLimit,
+          hasLogo: !!settings.logo?.data
+        },
+        logoUpdated
+      },
+      ...requestMeta
+    });
+
     res.json({ message: 'Configurações atualizadas com sucesso' });
   } catch (error) {
-    console.error('Erro ao atualizar configurações:', error);
+    logger.logError(error, { context: 'Atualizar configurações', userId: req.user?._id });
     res.status(500).json({ message: 'Erro ao atualizar configurações' });
   }
 });

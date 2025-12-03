@@ -5,6 +5,7 @@ import User from '../models/User.js';
 import { protect } from '../middleware/auth.js';
 import { getDepartmentName } from '../config/departments.js';
 import { getUserRole } from '../config/userRoles.js';
+import logger from '../utils/logger.js';
 
 // URL da API externa do controle interno
 const EXTERNAL_API_URL = process.env.EXTERNAL_API_URL || 'https://hall-api.azurewebsites.net/api';
@@ -14,7 +15,7 @@ const router = express.Router();
 // Create first admin user
 router.post('/setup', async (req, res) => {
   try {
-    console.log('Setup request received:', req.body);
+    logger.info('Setup request received', { email: req.body?.email });
     const adminExists = await User.findOne({ role: 'admin' });
     if (adminExists) {
       return res.status(400).json({ message: 'Admin user already exists' });
@@ -33,7 +34,7 @@ router.post('/setup', async (req, res) => {
       expiresIn: '30d',
     });
 
-    console.log('Admin user created successfully');
+    logger.info('Admin user created successfully', { userId: user._id, email: user.email });
     res.status(201).json({
       token,
       user: {
@@ -45,7 +46,7 @@ router.post('/setup', async (req, res) => {
       },
     });
   } catch (error) {
-    console.error('Setup error:', error);
+    logger.logError(error, { context: 'Setup - Criar admin' });
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 });
@@ -53,7 +54,7 @@ router.post('/setup', async (req, res) => {
 // Login via API externa do controle interno
 router.post('/external-login', async (req, res) => {
   try {
-    console.log('External login request received');
+    logger.info('External login request received', { login });
     const { login, password } = req.body;
     
     if (!login || !password) {
@@ -62,9 +63,7 @@ router.post('/external-login', async (req, res) => {
     
     // Autenticar com a API externa
     try {
-      console.log('Tentando autenticar com a API externa');
-      console.log('URL da API externa:', EXTERNAL_API_URL);
-      console.log('Dados de login:', { login, password: '***' });
+      logger.debug('Tentando autenticar com a API externa', { apiUrl: EXTERNAL_API_URL, login });
       
       // Fazer uma requisição para a API externa para obter o token
       const loginResponse = await fetch(`${EXTERNAL_API_URL}/login`, {
@@ -78,14 +77,14 @@ router.post('/external-login', async (req, res) => {
         })
       });
       
-      console.log('Status da resposta da API externa:', loginResponse.status);
+      logger.debug('Status da resposta da API externa', { status: loginResponse.status, login });
       
       // Obter o texto da resposta primeiro
       const responseText = await loginResponse.text();
       
       // Verificar se a resposta contém mensagem de erro, mesmo com status 2xx
       if (!loginResponse.ok || responseText.includes('failed') || responseText.includes('error') || responseText.includes('403')) {
-        console.log('Falha na autenticação com a API externa:', responseText);
+        logger.warn('Falha na autenticação com a API externa', { login, status: loginResponse.status });
         
         // Verificar se é um erro de permissão (403)
         if (responseText.includes('403')) {
@@ -106,15 +105,14 @@ router.post('/external-login', async (req, res) => {
       try {
         // Verificar se a resposta está vazia
         if (!responseText || responseText.trim() === '') {
-          console.log('Resposta da API externa está vazia, mas o status é OK');
+          logger.warn('Resposta da API externa está vazia', { login, status: loginResponse.status });
           return res.status(500).json({ message: 'A API externa retornou uma resposta vazia' });
         } else {
           // Tentar fazer parse do JSON
           try {
             externalData = JSON.parse(responseText);
           } catch (parseError) {
-            console.error('Erro ao fazer parse da resposta JSON:', parseError);
-            console.log('Resposta original:', responseText);
+            logger.logError(parseError, { context: 'Parse resposta JSON da API externa', login, responseLength: responseText?.length });
             return res.status(500).json({ 
               message: 'Erro ao processar resposta da API externa', 
               details: responseText.substring(0, 200) // Limita o tamanho da resposta para evitar dados muito grandes
@@ -122,11 +120,9 @@ router.post('/external-login', async (req, res) => {
           }
         }
         
-        console.log('============= RESPOSTA COMPLETA DA API EXTERNA =============');
-        console.log(JSON.stringify(externalData, null, 2));
-        console.log('=========================================================');
+        logger.debug('Resposta da API externa recebida', { login, hasToken: !!externalData?.token, hasUser: !!externalData?.user });
       } catch (error) {
-        console.error('Erro ao processar resposta da API externa:', error);
+        logger.logError(error, { context: 'Processar resposta da API externa', login });
         return res.status(500).json({ message: 'Erro ao processar resposta da API externa', error: error.message });
       }
       
@@ -135,7 +131,7 @@ router.post('/external-login', async (req, res) => {
       }
       
       const externalToken = externalData.token;
-      console.log('Token externo obtido com sucesso');
+      logger.debug('Token externo obtido com sucesso', { login });
       
       // Tentar obter dados do usuário diretamente da resposta de login
       let externalUserData;
@@ -143,13 +139,12 @@ router.post('/external-login', async (req, res) => {
       
       if (externalData.user) {
         // Se a resposta de login já incluir dados do usuário
-        console.log('Dados do usuário obtidos da resposta de login');
-        console.log('Dados completos do usuário externo:', JSON.stringify(externalData.user, null, 2));
+        logger.debug('Dados do usuário obtidos da resposta de login', { login, hasUserData: !!externalData.user });
         externalUserData = externalData.user;
         externalId = externalUserData.id || externalUserData.userId;
       } else {
         // Se precisarmos fazer uma chamada separada para obter dados do usuário
-        console.log('Tentando obter dados do usuário da API externa');
+        logger.debug('Tentando obter dados do usuário da API externa', { login });
         try {
           const userResponse = await fetch(`${EXTERNAL_API_URL}/user`, {
             headers: {
@@ -157,14 +152,14 @@ router.post('/external-login', async (req, res) => {
             }
           });
           
-          console.log('Status da resposta de dados do usuário:', userResponse.status);
+          logger.debug('Status da resposta de dados do usuário', { status: userResponse.status, login });
           
           if (!userResponse.ok) {
             const errorText = await userResponse.text();
-            console.log('Falha ao obter dados do usuário:', errorText);
+            logger.warn('Falha ao obter dados do usuário via /user', { login, status: userResponse.status });
             
             // Tentar com /me em vez de /user
-            console.log('Tentando com endpoint /me');
+            logger.debug('Tentando obter dados do usuário via /me', { login });
             const meResponse = await fetch(`${EXTERNAL_API_URL}/me`, {
               headers: {
                 'Authorization': `Bearer ${externalToken}`
@@ -172,21 +167,21 @@ router.post('/external-login', async (req, res) => {
             });
             
             if (!meResponse.ok) {
-              console.log('Falha ao obter dados do usuário via /me:', await meResponse.text());
+              logger.warn('Falha ao obter dados do usuário via /me', { login, status: meResponse.status });
               return res.status(401).json({ message: 'Não foi possível obter dados do usuário externo' });
             }
             
             externalUserData = await meResponse.json();
-            console.log('Dados do usuário obtidos via /me:', JSON.stringify(externalUserData, null, 2));
+            logger.debug('Dados do usuário obtidos via /me', { login, hasData: !!externalUserData });
           } else {
             externalUserData = await userResponse.json();
-            console.log('Dados do usuário obtidos via /user:', JSON.stringify(externalUserData, null, 2));
+            logger.debug('Dados do usuário obtidos via /user', { login, hasData: !!externalUserData });
           }
           
           // Extrair o ID do usuário externo
           externalId = externalUserData.id || externalUserData.userId;
         } catch (error) {
-          console.error('Erro ao obter dados do usuário:', error);
+          logger.logError(error, { context: 'Obter dados do usuário da API externa', login });
           return res.status(500).json({ message: 'Erro ao obter dados do usuário externo', error: error.message });
         }
       }
@@ -220,20 +215,15 @@ router.post('/external-login', async (req, res) => {
       if (externalUserData.departmentId) {
         // Usar o mapeamento para obter o nome do departamento
         userDepartment = getDepartmentName(externalUserData.departmentId);
-        console.log(`ID do departamento ${externalUserData.departmentId} mapeado para: ${userDepartment}`);
+        logger.debug('Departamento mapeado', { departmentId: externalUserData.departmentId, departmentName: userDepartment, login });
       } else if (externalUserData.department) {
         // Usar o departamento diretamente se disponível
         userDepartment = externalUserData.department;
       }
       
-      console.log('Dados extraídos do usuário externo:');
-      console.log('- Nome:', userName);
-      console.log('- Email:', userEmail);
-      console.log('- Departamento:', userDepartment);
-      
       // Determinar o papel (role) do usuário com base no ID externo
       const userRole = getUserRole(externalId);
-      console.log(`Papel do usuário ${externalId}: ${userRole}`);
+      logger.info('Dados extraídos do usuário externo', { externalId, userName, userEmail, userDepartment, userRole, login });
       
       if (!user) {
         // Criar novo usuário se não existir
@@ -247,7 +237,7 @@ router.post('/external-login', async (req, res) => {
         });
         
         await user.save();
-        console.log('Novo usuário criado com ID externo:', externalId, 'e papel:', userRole);
+        logger.info('Novo usuário criado com ID externo', { externalId, userRole, userId: user._id, login });
       } else {
         // Atualizar dados do usuário existente
         user.name = userName;
@@ -257,7 +247,7 @@ router.post('/external-login', async (req, res) => {
         user.role = userRole; // Atualizar papel com base no ID externo
         
         await user.save();
-        console.log('Usuário existente atualizado com ID externo:', externalId, 'e papel:', userRole);
+        logger.info('Usuário existente atualizado com ID externo', { externalId, userRole, userId: user._id, login });
       }
       
       // Gerar token JWT para o usuário
@@ -277,11 +267,11 @@ router.post('/external-login', async (req, res) => {
         },
       });
     } catch (error) {
-      console.error('Error validating external token:', error);
+      logger.logError(error, { context: 'Validar token externo', login });
       return res.status(401).json({ message: 'Erro ao validar token externo' });
     }
   } catch (error) {
-    console.error('External login error:', error);
+    logger.logError(error, { context: 'External login', login });
     res.status(500).json({ message: 'Erro no servidor', error: error.message });
   }
 });
@@ -289,7 +279,7 @@ router.post('/external-login', async (req, res) => {
 // Rota para vincular conta externa com email
 router.post('/link-external-account', async (req, res) => {
   try {
-    console.log('Link external account request received');
+    logger.info('Link external account request received', { email: req.body?.email });
     const { externalToken, email } = req.body;
     
     if (!externalToken || !email) {
@@ -339,7 +329,7 @@ router.post('/link-external-account', async (req, res) => {
         user.externalId = externalId;
         user.externalAuth = true;
         await user.save();
-        console.log('Existing user linked to external account:', user.name);
+        logger.info('Existing user linked to external account', { userId: user._id, userName: user.name, email });
       } else {
         // Se o usuário não existir, criar um novo usuário
         user = await User.create({
@@ -353,7 +343,7 @@ router.post('/link-external-account', async (req, res) => {
           password: Math.random().toString(36).slice(-10) // Senha aleatória que nunca será usada
         });
         
-        console.log('New external user created with provided email:', user.name);
+        logger.info('New external user created with provided email', { userId: user._id, userName: user.name, email });
       }
       
       // Gerar token JWT para o usuário
@@ -373,11 +363,11 @@ router.post('/link-external-account', async (req, res) => {
         },
       });
     } catch (error) {
-      console.error('Error validating external token:', error);
+      logger.logError(error, { context: 'Validar token externo', login });
       return res.status(401).json({ message: 'Erro ao validar token externo' });
     }
   } catch (error) {
-    console.error('Link external account error:', error);
+    logger.logError(error, { context: 'Link external account', email: req.body?.email });
     res.status(500).json({ message: 'Erro no servidor', error: error.message });
   }
 });
@@ -385,7 +375,7 @@ router.post('/link-external-account', async (req, res) => {
 // Get current user
 router.get('/me', protect, async (req, res) => {
   try {
-    console.log('Get current user request from:', req.user.name);
+    logger.debug('Get current user request', { userId: req.user._id, userName: req.user.name });
     const user = await User.findById(req.user._id).select('-password');
     res.json({
       id: user._id,
@@ -397,7 +387,7 @@ router.get('/me', protect, async (req, res) => {
       externalId: user.externalId
     });
   } catch (error) {
-    console.error('Get current user error:', error);
+    logger.logError(error, { context: 'Get current user', userId: req.user?._id });
     res.status(500).json({ message: 'Erro no servidor', error: error.message });
   }
 });
@@ -408,7 +398,7 @@ router.get('/validate-token', protect, async (req, res) => {
     // Se chegou aqui, o token é válido (middleware protect já validou)
     res.status(200).json({ valid: true });
   } catch (error) {
-    console.error('Validate token error:', error);
+    logger.logError(error, { context: 'Validate token', userId: req.user?._id });
     res.status(401).json({ valid: false });
   }
 });
@@ -416,12 +406,8 @@ router.get('/validate-token', protect, async (req, res) => {
 // Change password
 router.patch('/change-password', protect, async (req, res) => {
   try {
-    console.log('Change password request body:', req.body);
+    logger.debug('Change password request', { userId: req.user._id });
     const { oldPassword, newPassword } = req.body;
-    
-    // Log the extracted values
-    console.log('Old Password:', oldPassword);
-    console.log('New Password:', newPassword);
     
     // Get user with password field explicitly included
     const user = await User.findById(req.user._id).select('+password');
@@ -429,7 +415,7 @@ router.patch('/change-password', protect, async (req, res) => {
       return res.status(404).json({ message: 'Usuário não encontrado' });
     }
     
-    console.log('User found:', { id: user._id, hasPassword: !!user.password });
+    logger.debug('User found for password change', { userId: user._id, hasPassword: !!user.password });
     
     // Check if current password matches
     const isMatch = await user.matchPassword(oldPassword);
@@ -443,7 +429,7 @@ router.patch('/change-password', protect, async (req, res) => {
     
     res.json({ message: 'Senha alterada com sucesso' });
   } catch (error) {
-    console.error('Change password error:', error);
+    logger.logError(error, { context: 'Change password', userId: req.user?._id });
     res.status(500).json({ message: 'Erro ao alterar senha', error: error.message });
   }
 });
