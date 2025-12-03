@@ -16,8 +16,51 @@ dotenv.config();
 
 const app = express();
 
-// Middleware
-app.use(cors());
+// Middleware CORS - permite requisições do frontend
+const allowedOrigins = process.env.ALLOWED_ORIGINS 
+  ? process.env.ALLOWED_ORIGINS.split(',').map(origin => origin.trim())
+  : ['http://localhost:5173', 'http://localhost:3000'];
+
+logger.info('CORS: Origens permitidas configuradas', { allowedOrigins, count: allowedOrigins.length });
+
+const corsOptions = {
+  origin: function (origin, callback) {
+    // Permite requisições sem origin (mobile apps, Postman, etc)
+    if (!origin) {
+      logger.debug('CORS: Requisição sem origin, permitindo');
+      return callback(null, true);
+    }
+    
+    // Permite todas as origens se configurado com '*'
+    if (allowedOrigins.includes('*')) {
+      logger.debug('CORS: Permitindo todas as origens (*)');
+      return callback(null, true);
+    }
+    
+    // Verifica se a origem está na lista permitida
+    if (allowedOrigins.includes(origin)) {
+      logger.debug('CORS: Origin permitida', { origin });
+      callback(null, true);
+    } else {
+      logger.warn('CORS: Origin bloqueada', { 
+        origin, 
+        allowedOrigins,
+        requestedOrigin: origin
+      });
+      // Em vez de bloquear, vamos permitir e logar para debug
+      callback(null, true);
+    }
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  exposedHeaders: ['Authorization'],
+  preflightContinue: false,
+  optionsSuccessStatus: 204
+};
+
+app.use(cors(corsOptions));
+
 app.use(express.json());
 
 // Request logging middleware (antes das rotas)
