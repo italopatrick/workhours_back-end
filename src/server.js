@@ -23,7 +23,30 @@ const allowedOrigins = process.env.ALLOWED_ORIGINS
 
 logger.info('CORS: Origens permitidas configuradas', { allowedOrigins, count: allowedOrigins.length });
 
-// Configuração de CORS mais permissiva para garantir funcionamento
+// Handler de OPTIONS PRIMEIRO - antes de qualquer outro middleware
+app.options('*', (req, res) => {
+  const origin = req.headers.origin;
+  
+  logger.info('CORS: Preflight OPTIONS request recebida', { origin, allowedOrigins });
+  
+  if (origin) {
+    const isAllowed = allowedOrigins.includes('*') || allowedOrigins.includes(origin);
+    if (isAllowed) {
+      res.header('Access-Control-Allow-Origin', origin);
+      res.header('Access-Control-Allow-Credentials', 'true');
+      res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
+      res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept');
+      res.header('Access-Control-Max-Age', '86400');
+      logger.info('CORS: Preflight permitida', { origin });
+    } else {
+      logger.warn('CORS: Preflight bloqueada - origin não permitida', { origin, allowedOrigins });
+    }
+  }
+  
+  res.status(204).end();
+});
+
+// Configuração de CORS
 const corsOptions = {
   origin: function (origin, callback) {
     // Permite requisições sem origin (mobile apps, Postman, etc)
@@ -40,8 +63,8 @@ const corsOptions = {
     if (allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
-      // Para debug, vamos permitir temporariamente e logar
-      logger.warn('CORS: Origin não configurada, mas permitindo para debug', { 
+      // Permite temporariamente para debug, mas loga
+      logger.warn('CORS: Origin não configurada, mas permitindo', { 
         origin, 
         allowedOrigins
       });
@@ -54,41 +77,11 @@ const corsOptions = {
   exposedHeaders: ['Authorization'],
   preflightContinue: false,
   optionsSuccessStatus: 204,
-  maxAge: 86400 // Cache preflight por 24 horas
+  maxAge: 86400
 };
 
-// Aplicar CORS ANTES de qualquer outro middleware
+// Aplicar CORS
 app.use(cors(corsOptions));
-
-// Handler específico para OPTIONS (preflight) - deve estar ANTES de tudo
-app.options('*', (req, res) => {
-  const origin = req.headers.origin;
-  
-  if (origin && (allowedOrigins.includes('*') || allowedOrigins.includes(origin))) {
-    res.header('Access-Control-Allow-Origin', origin);
-    res.header('Access-Control-Allow-Credentials', 'true');
-    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
-    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept');
-    res.header('Access-Control-Max-Age', '86400');
-  }
-  
-  res.status(204).end();
-});
-
-// Middleware adicional para garantir headers CORS em todas as respostas
-app.use((req, res, next) => {
-  const origin = req.headers.origin;
-  
-  if (origin) {
-    const isAllowed = allowedOrigins.includes('*') || allowedOrigins.includes(origin);
-    if (isAllowed) {
-      res.header('Access-Control-Allow-Origin', origin);
-      res.header('Access-Control-Allow-Credentials', 'true');
-    }
-  }
-  
-  next();
-});
 
 app.use(express.json());
 
