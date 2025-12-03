@@ -113,12 +113,8 @@ logger.logDatabase = (operation, collection, details = {}) => {
   });
 };
 
-// Manter compatibilidade com console para logs simples
-logger.log = logger.info;
-logger.warn = logger.warn;
-logger.error = logger.error;
-logger.info = logger.info;
-logger.debug = logger.debug;
+// Método log como alias para info (sem criar referência circular)
+logger.log = (message, meta) => logger.info(message, meta);
 
 export default logger;
 
