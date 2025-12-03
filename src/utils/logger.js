@@ -1,6 +1,7 @@
 import winston from 'winston';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import fs from 'fs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -20,8 +21,13 @@ const consoleFormat = winston.format.combine(
     let msg = `${timestamp} [${level}]: ${message}`;
     
     // Adicionar metadados se existirem
-    if (Object.keys(meta).length > 0) {
-      const metaStr = JSON.stringify(meta, null, 2);
+    const metaKeys = Object.keys(meta).filter(key => key !== 'splat' && key !== 'Symbol(level)' && key !== 'Symbol(message)');
+    if (metaKeys.length > 0) {
+      const metaObj = {};
+      metaKeys.forEach(key => {
+        metaObj[key] = meta[key];
+      });
+      const metaStr = JSON.stringify(metaObj, null, 2);
       msg += `\n${metaStr}`;
     }
     
@@ -29,54 +35,45 @@ const consoleFormat = winston.format.combine(
   })
 );
 
-// Criar diretório de logs se não existir
-import fs from 'fs';
-const logsDir = path.join(__dirname, '../../logs');
-try {
-  if (!fs.existsSync(logsDir)) {
-    fs.mkdirSync(logsDir, { recursive: true });
-  }
-} catch (error) {
-  // Se não conseguir criar o diretório, apenas loga no console
-  console.warn('Não foi possível criar diretório de logs, usando apenas console:', error.message);
-}
-
-// Configurar transportes
+// Configurar transportes - começa apenas com console
 const transports = [
-  // Log no console (sempre presente)
   new winston.transports.Console({
     format: consoleFormat,
     level: process.env.LOG_LEVEL || 'info'
   })
 ];
 
-// Adicionar transportes de arquivo apenas se o diretório existir e for possível escrever
+// Tentar adicionar transportes de arquivo apenas se o diretório for acessível
 try {
-  if (fs.existsSync(logsDir) && fs.accessSync) {
-    // Log de erros em arquivo separado
-    transports.push(
-      new winston.transports.File({
-        filename: path.join(logsDir, 'error.log'),
-        level: 'error',
-        format: logFormat,
-        maxsize: 5242880, // 5MB
-        maxFiles: 5
-      })
-    );
-    
-    // Todos os logs em um arquivo
-    transports.push(
-      new winston.transports.File({
-        filename: path.join(logsDir, 'combined.log'),
-        format: logFormat,
-        maxsize: 5242880, // 5MB
-        maxFiles: 10
-      })
-    );
+  const logsDir = path.join(__dirname, '../../logs');
+  
+  // Tentar criar diretório se não existir
+  if (!fs.existsSync(logsDir)) {
+    fs.mkdirSync(logsDir, { recursive: true });
   }
+  
+  // Verificar se podemos escrever no diretório
+  fs.accessSync(logsDir, fs.constants.W_OK);
+  
+  // Adicionar transportes de arquivo
+  transports.push(
+    new winston.transports.File({
+      filename: path.join(logsDir, 'error.log'),
+      level: 'error',
+      format: logFormat,
+      maxsize: 5242880, // 5MB
+      maxFiles: 5
+    }),
+    new winston.transports.File({
+      filename: path.join(logsDir, 'combined.log'),
+      format: logFormat,
+      maxsize: 5242880, // 5MB
+      maxFiles: 10
+    })
+  );
 } catch (error) {
-  // Se não conseguir adicionar transportes de arquivo, continua apenas com console
-  console.warn('Não foi possível configurar logs em arquivo, usando apenas console');
+  // Se não conseguir criar/usar arquivos, continua apenas com console
+  // Não loga erro aqui para evitar loop
 }
 
 // Criar instância do logger
@@ -84,11 +81,10 @@ const logger = winston.createLogger({
   level: process.env.LOG_LEVEL || 'info',
   format: logFormat,
   transports,
-  // Não sair do processo em caso de erro
   exitOnError: false
 });
 
-// Adicionar métodos auxiliares para facilitar o uso
+// Métodos auxiliares para facilitar o uso
 logger.logRequest = (req, message = '') => {
   const logData = {
     method: req.method,
@@ -131,4 +127,3 @@ logger.logDatabase = (operation, collection, details = {}) => {
 };
 
 export default logger;
-
