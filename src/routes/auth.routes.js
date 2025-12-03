@@ -54,8 +54,8 @@ router.post('/setup', async (req, res) => {
 // Login via API externa do controle interno
 router.post('/external-login', async (req, res) => {
   try {
-    logger.info('External login request received', { login });
     const { login, password } = req.body;
+    logger.info('External login request received', { login: login || 'not provided' });
     
     if (!login || !password) {
       return res.status(400).json({ message: 'Login e senha são obrigatórios' });
@@ -267,11 +267,12 @@ router.post('/external-login', async (req, res) => {
         },
       });
     } catch (error) {
-      logger.logError(error, { context: 'Validar token externo', login });
+      logger.logError(error, { context: 'Validar token externo', login: login || 'unknown' });
       return res.status(401).json({ message: 'Erro ao validar token externo' });
     }
   } catch (error) {
-    logger.logError(error, { context: 'External login', login });
+    const loginValue = req.body?.login || 'unknown';
+    logger.logError(error, { context: 'External login', login: loginValue });
     res.status(500).json({ message: 'Erro no servidor', error: error.message });
   }
 });
