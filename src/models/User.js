@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import bcrypt from 'bcryptjs';
+import logger from '../utils/logger.js';
 
 const userSchema = new mongoose.Schema({
   email: {
@@ -64,13 +65,13 @@ userSchema.pre('save', async function(next) {
   if (this.externalAuth && !this.password) return next();
   
   try {
-    console.log('Hashing password for user:', this.email);
+    logger.debug('Hashing password', { email: this.email });
     const salt = await bcrypt.genSalt(10);
     this.password = await bcrypt.hash(this.password, salt);
-    console.log('Password hashed successfully for user:', this.email);
+    logger.debug('Password hashed successfully', { email: this.email });
     next();
   } catch (error) {
-    console.error('Error hashing password:', error);
+    logger.logError(error, { context: 'Password hashing', email: this.email });
     next(error);
   }
 });
@@ -78,17 +79,17 @@ userSchema.pre('save', async function(next) {
 userSchema.methods.matchPassword = async function(candidatePassword) {
   // Se for um usuário externo e não tiver senha, não permite login local
   if (this.externalAuth && !this.password) {
-    console.log('External user without password tried local login:', this.email);
+    logger.warn('External user without password tried local login', { email: this.email });
     return false;
   }
   
   try {
-    console.log('Comparing password for user:', this.email);
+    logger.debug('Comparing password', { email: this.email });
     const isMatch = await bcrypt.compare(candidatePassword, this.password);
-    console.log('Password match result:', isMatch);
+    logger.debug('Password comparison result', { email: this.email, match: isMatch });
     return isMatch;
   } catch (error) {
-    console.error('Error comparing password:', error);
+    logger.logError(error, { context: 'Password comparison', email: this.email });
     throw error;
   }
 };

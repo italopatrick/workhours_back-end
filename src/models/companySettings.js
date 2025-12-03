@@ -3,7 +3,7 @@ import mongoose from 'mongoose';
 const companySettingsSchema = new mongoose.Schema({
   name: {
     type: String,
-    required: true
+    default: ''
   },
   logo: {
     data: Buffer,
@@ -42,6 +42,17 @@ const companySettingsSchema = new mongoose.Schema({
     type: Number,
     min: 0,
     default: 40 // 40 horas por padrão
+  },
+  // Limites do banco de horas
+  defaultAccumulationLimit: {
+    type: Number,
+    min: 0,
+    default: 0 // 0 = sem limite (desabilitado por padrão)
+  },
+  defaultUsageLimit: {
+    type: Number,
+    min: 0,
+    default: 0 // 0 = sem limite (desabilitado por padrão)
   }
 });
 

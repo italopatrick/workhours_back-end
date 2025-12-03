@@ -3,6 +3,7 @@ import PDFDocument from 'pdfkit';
 import { createObjectCsvWriter } from 'csv-writer';
 import { protect } from '../middleware/auth.js';
 import Overtime from '../models/Overtime.js';
+import logger from '../utils/logger.js';
 
 const router = express.Router();
 
@@ -33,6 +34,7 @@ router.get('/pdf', protect, async (req, res) => {
 
     doc.end();
   } catch (error) {
+    logger.logError(error, { context: 'Gerar relatório PDF', userId: req.user?._id });
     res.status(500).json({ message: 'Server error' });
   }
 });
@@ -69,6 +71,7 @@ router.get('/csv', protect, async (req, res) => {
     await csvWriter.writeRecords(records);
     res.download('overtime-report.csv');
   } catch (error) {
+    logger.logError(error, { context: 'Gerar relatório PDF', userId: req.user?._id });
     res.status(500).json({ message: 'Server error' });
   }
 });

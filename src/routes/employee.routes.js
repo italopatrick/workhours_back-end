@@ -1,6 +1,8 @@
 import express from 'express';
 import { protect, admin } from '../middleware/auth.js';
 import User from '../models/User.js';
+import { logAudit, getRequestMetadata } from '../middleware/audit.js';
+import logger from '../utils/logger.js';
 
 const router = express.Router();
 
@@ -28,7 +30,7 @@ router.get('/', protect, async (req, res) => {
       
     res.json(formattedEmployees);
   } catch (error) {
-    console.error('Error fetching employees:', error);
+    logger.logError(error, { context: 'Buscar funcionários' });
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 });
@@ -56,6 +58,25 @@ router.post('/', protect, admin, async (req, res) => {
       overtimeLimit: overtimeLimit || null,
     });
 
+    // Registrar log de auditoria
+    const requestMeta = getRequestMetadata(req);
+    await logAudit({
+      action: 'employee_created',
+      entityType: 'employee',
+      entityId: user._id,
+      userId: req.user._id,
+      targetUserId: user._id,
+      description: `Funcionário criado: ${name} (${email})`,
+      metadata: {
+        name,
+        email,
+        department,
+        role: role || 'employee',
+        overtimeLimit: overtimeLimit || null
+      },
+      ...requestMeta
+    });
+
     res.status(201).json({
       id: user._id,
       name: user.name,
@@ -66,7 +87,7 @@ router.post('/', protect, admin, async (req, res) => {
       overtimeExceptions: user.overtimeExceptions || []
     });
   } catch (error) {
-    console.error('Error creating employee:', error);
+    logger.logError(error, { context: 'Criar funcionário', userId: req.user?._id });
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 });
@@ -85,12 +106,30 @@ router.delete('/:id', protect, admin, async (req, res) => {
       return res.status(400).json({ message: 'You cannot delete your own account' });
     }
 
+    // Registrar log de auditoria antes de deletar
+    const requestMeta = getRequestMetadata(req);
+    await logAudit({
+      action: 'employee_deleted',
+      entityType: 'employee',
+      entityId: user._id,
+      userId: req.user._id,
+      targetUserId: user._id,
+      description: `Funcionário excluído: ${user.name} (${user.email})`,
+      metadata: {
+        name: user.name,
+        email: user.email,
+        department: user.department,
+        role: user.role
+      },
+      ...requestMeta
+    });
+
     // Deleta o usuário
     await user.deleteOne();
     
     res.json({ message: 'User deleted successfully' });
   } catch (error) {
-    console.error('Error deleting employee:', error);
+    logger.logError(error, { context: 'Excluir funcionário', employeeId: req.params.id, userId: req.user?._id });
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 });
@@ -105,9 +144,27 @@ router.patch('/:id/overtime-limit', protect, admin, async (req, res) => {
       return res.status(404).json({ message: 'Funcionário não encontrado' });
     }
 
+    const oldLimit = user.overtimeLimit;
+    
     // Atualiza o limite de horas extras
     user.overtimeLimit = overtimeLimit === null || overtimeLimit === undefined ? null : Number(overtimeLimit);
     await user.save();
+
+    // Registrar log de auditoria
+    const requestMeta = getRequestMetadata(req);
+    await logAudit({
+      action: 'employee_limit_changed',
+      entityType: 'employee',
+      entityId: user._id,
+      userId: req.user._id,
+      targetUserId: user._id,
+      description: `Limite de horas extras alterado para ${user.name}: ${oldLimit || 'N/A'}h → ${user.overtimeLimit || 'N/A'}h`,
+      metadata: {
+        oldLimit: oldLimit || null,
+        newLimit: user.overtimeLimit || null
+      },
+      ...requestMeta
+    });
 
     res.json({
       id: user._id,
@@ -119,7 +176,7 @@ router.patch('/:id/overtime-limit', protect, admin, async (req, res) => {
       overtimeExceptions: user.overtimeExceptions || []
     });
   } catch (error) {
-    console.error('Erro ao atualizar limite de horas extras:', error);
+    logger.logError(error, { context: 'Atualizar limite de horas extras', employeeId: req.params.id, userId: req.user?._id });
     res.status(500).json({ message: 'Erro no servidor', error: error.message });
   }
 });
@@ -163,6 +220,24 @@ router.post('/:id/overtime-exception', protect, admin, async (req, res) => {
 
     await user.save();
 
+    // Registrar log de auditoria
+    const requestMeta = getRequestMetadata(req);
+    await logAudit({
+      action: 'employee_exception_added',
+      entityType: 'employee',
+      entityId: user._id,
+      userId: req.user._id,
+      targetUserId: user._id,
+      description: `Exceção de horas extras adicionada para ${user.name}: ${additionalHours}h extras em ${month}/${year}`,
+      metadata: {
+        month: Number(month),
+        year: Number(year),
+        additionalHours: Number(additionalHours),
+        isUpdate: existingExceptionIndex >= 0
+      },
+      ...requestMeta
+    });
+
     res.json({
       id: user._id,
       name: user.name,
@@ -170,7 +245,7 @@ router.post('/:id/overtime-exception', protect, admin, async (req, res) => {
       overtimeExceptions: user.overtimeExceptions
     });
   } catch (error) {
-    console.error('Erro ao adicionar exceção de horas extras:', error);
+    logger.logError(error, { context: 'Adicionar exceção de horas extras', employeeId: req.params.id, userId: req.user?._id });
     res.status(500).json({ message: 'Erro no servidor', error: error.message });
   }
 });
@@ -191,6 +266,22 @@ router.delete('/:id/overtime-exception/:month/:year', protect, admin, async (req
         e => !(e.month === Number(month) && e.year === Number(year))
       );
       await user.save();
+
+      // Registrar log de auditoria
+      const requestMeta = getRequestMetadata(req);
+      await logAudit({
+        action: 'employee_exception_removed',
+        entityType: 'employee',
+        entityId: user._id,
+        userId: req.user._id,
+        targetUserId: user._id,
+        description: `Exceção de horas extras removida para ${user.name}: mês ${month}/${year}`,
+        metadata: {
+          month: Number(month),
+          year: Number(year)
+        },
+        ...requestMeta
+      });
     }
 
     res.json({
@@ -200,7 +291,63 @@ router.delete('/:id/overtime-exception/:month/:year', protect, admin, async (req
       overtimeExceptions: user.overtimeExceptions
     });
   } catch (error) {
-    console.error('Erro ao remover exceção de horas extras:', error);
+    logger.logError(error, { context: 'Remover exceção de horas extras', employeeId: req.params.id, userId: req.user?._id });
+    res.status(500).json({ message: 'Erro no servidor', error: error.message });
+  }
+});
+
+// Atualizar role de um funcionário (admin only)
+router.patch('/:id/role', protect, admin, async (req, res) => {
+  try {
+    const { role } = req.body;
+    
+    if (!role || !['admin', 'employee'].includes(role)) {
+      return res.status(400).json({ message: 'Role inválida. Use "admin" ou "employee"' });
+    }
+
+    const user = await User.findById(req.params.id);
+    if (!user) {
+      return res.status(404).json({ message: 'Funcionário não encontrado' });
+    }
+
+    // Não permite alterar a própria role
+    if (user._id.toString() === req.user._id.toString()) {
+      return res.status(400).json({ message: 'Você não pode alterar sua própria função' });
+    }
+
+    const oldRole = user.role;
+
+    // Atualiza a role
+    user.role = role;
+    await user.save();
+
+    // Registrar log de auditoria
+    const requestMeta = getRequestMetadata(req);
+    await logAudit({
+      action: 'employee_role_changed',
+      entityType: 'employee',
+      entityId: user._id,
+      userId: req.user._id,
+      targetUserId: user._id,
+      description: `Role alterada para ${user.name}: ${oldRole} → ${role}`,
+      metadata: {
+        oldRole,
+        newRole: role
+      },
+      ...requestMeta
+    });
+
+    res.json({
+      id: user._id,
+      name: user.name,
+      email: user.email,
+      department: user.department,
+      role: user.role,
+      overtimeLimit: user.overtimeLimit,
+      overtimeExceptions: user.overtimeExceptions || []
+    });
+  } catch (error) {
+    logger.logError(error, { context: 'Atualizar role do funcionário', employeeId: req.params.id, userId: req.user?._id });
     res.status(500).json({ message: 'Erro no servidor', error: error.message });
   }
 });

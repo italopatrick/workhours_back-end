@@ -30,6 +30,30 @@ const overtimeSchema = new mongoose.Schema({
     type: String,
     enum: ['pending', 'approved', 'rejected'],
     default: 'pending'
+  },
+  // Campos de auditoria
+  createdBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    default: null
+  },
+  approvedBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    default: null
+  },
+  rejectedBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    default: null
+  },
+  approvedAt: {
+    type: Date,
+    default: null
+  },
+  rejectedAt: {
+    type: Date,
+    default: null
   }
 }, {
   timestamps: true
