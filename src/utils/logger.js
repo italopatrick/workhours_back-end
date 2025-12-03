@@ -32,35 +32,52 @@ const consoleFormat = winston.format.combine(
 // Criar diretório de logs se não existir
 import fs from 'fs';
 const logsDir = path.join(__dirname, '../../logs');
-if (!fs.existsSync(logsDir)) {
-  fs.mkdirSync(logsDir, { recursive: true });
+try {
+  if (!fs.existsSync(logsDir)) {
+    fs.mkdirSync(logsDir, { recursive: true });
+  }
+} catch (error) {
+  // Se não conseguir criar o diretório, apenas loga no console
+  console.warn('Não foi possível criar diretório de logs, usando apenas console:', error.message);
 }
 
 // Configurar transportes
 const transports = [
-  // Log no console
+  // Log no console (sempre presente)
   new winston.transports.Console({
     format: consoleFormat,
     level: process.env.LOG_LEVEL || 'info'
-  }),
-  
-  // Log de erros em arquivo separado
-  new winston.transports.File({
-    filename: path.join(logsDir, 'error.log'),
-    level: 'error',
-    format: logFormat,
-    maxsize: 5242880, // 5MB
-    maxFiles: 5
-  }),
-  
-  // Todos os logs em um arquivo
-  new winston.transports.File({
-    filename: path.join(logsDir, 'combined.log'),
-    format: logFormat,
-    maxsize: 5242880, // 5MB
-    maxFiles: 10
   })
 ];
+
+// Adicionar transportes de arquivo apenas se o diretório existir e for possível escrever
+try {
+  if (fs.existsSync(logsDir) && fs.accessSync) {
+    // Log de erros em arquivo separado
+    transports.push(
+      new winston.transports.File({
+        filename: path.join(logsDir, 'error.log'),
+        level: 'error',
+        format: logFormat,
+        maxsize: 5242880, // 5MB
+        maxFiles: 5
+      })
+    );
+    
+    // Todos os logs em um arquivo
+    transports.push(
+      new winston.transports.File({
+        filename: path.join(logsDir, 'combined.log'),
+        format: logFormat,
+        maxsize: 5242880, // 5MB
+        maxFiles: 10
+      })
+    );
+  }
+} catch (error) {
+  // Se não conseguir adicionar transportes de arquivo, continua apenas com console
+  console.warn('Não foi possível configurar logs em arquivo, usando apenas console');
+}
 
 // Criar instância do logger
 const logger = winston.createLogger({
