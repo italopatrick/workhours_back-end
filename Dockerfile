@@ -1,5 +1,5 @@
 # Use uma imagem Node.js oficial
-FROM node:18-alpine
+FROM node:20-alpine
 
 # Configurar timezone para Brasil (GMT-3)
 RUN apk add --no-cache tzdata
