@@ -15,6 +15,9 @@ WORKDIR /app
 # Copiar arquivos de dependências
 COPY package*.json ./
 
+# Copiar schema Prisma antes de instalar (necessário para postinstall)
+COPY prisma ./prisma
+
 # Instalar dependências (incluindo devDependencies para Prisma CLI)
 RUN npm ci && npm cache clean --force
 
@@ -25,7 +28,7 @@ COPY . .
 COPY docker-entrypoint.sh /app/docker-entrypoint.sh
 RUN chmod +x /app/docker-entrypoint.sh
 
-# Gerar Prisma Client
+# Prisma Client já foi gerado no postinstall, mas garantimos aqui também
 RUN npx prisma generate
 
 # Mudar propriedade dos arquivos para o usuário nodejs
