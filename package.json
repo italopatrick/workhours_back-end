@@ -33,6 +33,7 @@
     "winston": "^3.18.3"
   },
   "devDependencies": {
+    "mongoose": "^8.0.0",
     "nodemon": "^2.0.22"
   }
 }

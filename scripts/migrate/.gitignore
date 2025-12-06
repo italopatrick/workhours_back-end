@@ -1,0 +1,13 @@
+# Dados exportados do MongoDB
+data/
+*.json
+
+# Dados transformados
+transformed/
+
+# Mapeamento de IDs
+id-mapping.json
+
+# Logs
+*.log
+
