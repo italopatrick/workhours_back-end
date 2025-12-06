@@ -9,7 +9,10 @@ import prisma from '../config/database.js';
  * @returns {Promise<Object>} Company settings
  */
 export async function getOrCreateSettings() {
-  let settings = await prisma.companySettings.findFirst();
+  let settings = await prisma.companySettings.findFirst({
+    // Garantir que todos os campos sejam retornados, incluindo logo
+    select: undefined // undefined retorna todos os campos
+  });
   
   if (!settings) {
     settings = await prisma.companySettings.create({

@@ -82,7 +82,9 @@ const corsOptions = {
 // Aplicar CORS
 app.use(cors(corsOptions));
 
-app.use(express.json());
+// Configurar body parser com limites maiores para uploads
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Request logging middleware (antes das rotas)
 app.use(requestLogger);
