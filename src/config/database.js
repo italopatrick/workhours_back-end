@@ -25,9 +25,8 @@ export function getPrismaClient() {
     });
 
     // Handle connection errors
-    prisma.$on('error' as never, (e) => {
-      logger.logError(e, { context: 'Prisma Client Error' });
-    });
+    // Note: $on is not available in Prisma Client, errors are handled via try/catch
+    // Removed $on handler as it's not supported in Prisma Client
   }
   return prisma;
 }
