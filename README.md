@@ -65,7 +65,7 @@ DB_TIMEZONE=America/Sao_Paulo
 
 # Autenticação
 JWT_SECRET=seu_jwt_secret_super_seguro_min_32_caracteres
-EXTERNAL_API_URL=https://hall-api.azurewebsites.net/api
+EXTERNAL_API_URL=
 
 # CORS
 ALLOWED_ORIGINS=https://primetimedev.workhours.com.br,https://primetime.workhours.com.br
@@ -180,7 +180,7 @@ ALLOWED_ORIGINS=https://primetimedev.workhours.com.br,https://primetime.workhour
 
 #### API Externa (autenticação)
 ```env
-EXTERNAL_API_URL=https://hall-api.azurewebsites.net/api
+EXTERNAL_API_URL=
 ```
 
 #### Email SMTP
