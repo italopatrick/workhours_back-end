@@ -252,6 +252,7 @@ router.post('/external-login', async (req, res) => {
           email: userEmail,
           department: userDepartment,
           externalAuth: true,
+          externalId: String(externalId), // Garantir que é string
           role: userRole // Atualizar papel com base no ID externo
         });
         
