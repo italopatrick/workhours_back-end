@@ -3,13 +3,29 @@ set -e
 
 echo "🚀 Iniciando aplicação..."
 
-# Verificar se DATABASE_URL está configurada
+# Tentar construir DATABASE_URL a partir de variáveis individuais se não estiver configurada
 if [ -z "$DATABASE_URL" ]; then
-  echo "⚠️  AVISO: DATABASE_URL não está configurada. Pulando migrations."
-  echo "⚠️  Certifique-se de configurar DATABASE_URL no ambiente antes de iniciar."
-else
+  echo "📝 DATABASE_URL não encontrada, tentando construir a partir de variáveis individuais..."
+  
+  if [ -n "$DB_HOST" ] && [ -n "$DB_USER" ] && [ -n "$DB_PASSWORD" ] && [ -n "$DB_NAME" ]; then
+    DB_PORT=${DB_PORT:-5432}
+    DB_SSLMODE=${DB_SSLMODE:-disable}
+    DB_TIMEZONE=${DB_TIMEZONE:-America/Sao_Paulo}
+    
+    DATABASE_URL="postgresql://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}?sslmode=${DB_SSLMODE}&timezone=$(echo ${DB_TIMEZONE} | sed 's/ /%20/g')"
+    export DATABASE_URL
+    echo "✅ DATABASE_URL construída a partir de variáveis individuais"
+  else
+    echo "⚠️  AVISO: DATABASE_URL não está configurada e variáveis individuais não estão completas."
+    echo "⚠️  Variáveis necessárias: DB_HOST, DB_USER, DB_PASSWORD, DB_NAME"
+    echo "⚠️  Pulando migrations."
+  fi
+fi
+
+# Executar migrations se DATABASE_URL estiver disponível
+if [ -n "$DATABASE_URL" ]; then
   echo "📦 Executando migrations do Prisma..."
-  echo "🔗 Database: ${DATABASE_URL%%@*}" # Mostra apenas user@host (sem senha)
+  echo "🔗 Database: ${DB_HOST:-${DATABASE_URL%%@*}}" # Mostra host ou user@host (sem senha)
   
   # Executar migrations do Prisma
   npx prisma migrate deploy || {

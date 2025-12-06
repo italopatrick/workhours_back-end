@@ -2,12 +2,34 @@
 
 ## Crie um arquivo `.env` na raiz do projeto com o seguinte conteúdo:
 
+Você pode configurar o banco de dados de duas formas:
+
+### Opção 1: Usando DATABASE_URL (recomendado)
+
 ```env
 # ============================================
 # PostgreSQL Database Configuration
 # ============================================
 # Formato: postgresql://user:password@host:port/database?sslmode=disable
 DATABASE_URL="postgresql://evlove:8849e1f11e743d3d854f@wkhs_evlovedb-prod:5432/evlove?sslmode=disable"
+```
+
+### Opção 2: Usando variáveis individuais (alternativa)
+
+```env
+# ============================================
+# PostgreSQL Database Configuration (Variáveis Individuais)
+# ============================================
+DB_HOST=workhours_primetimedb-dev
+DB_PORT=5432
+DB_USER=postgres
+DB_PASSWORD=40e7db05128f520df3aa
+DB_NAME=primetimedb-dev
+DB_SSLMODE=disable
+DB_TIMEZONE=America/Sao_Paulo
+```
+
+**Nota:** Se você usar variáveis individuais, a `DATABASE_URL` será construída automaticamente.
 
 # ============================================
 # Server Configuration

@@ -1,5 +1,16 @@
 import { PrismaClient } from '@prisma/client';
 import logger from '../utils/logger.js';
+import { getDatabaseUrl } from './databaseUrl.js';
+
+// Garantir que DATABASE_URL está configurada antes de usar Prisma
+if (!process.env.DATABASE_URL) {
+  try {
+    process.env.DATABASE_URL = getDatabaseUrl();
+    logger.info('DATABASE_URL construída a partir de variáveis individuais');
+  } catch (error) {
+    logger.logError(error, { context: 'Configurar DATABASE_URL' });
+  }
+}
 
 // Singleton pattern para Prisma Client
 let prisma = null;

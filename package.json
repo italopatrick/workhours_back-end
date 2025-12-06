@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "postinstall": "prisma generate",
-    "prestart": "node -e \"require('dotenv').config(); if(process.env.DATABASE_URL){require('child_process').execSync('prisma migrate deploy',{stdio:'inherit'})}else{console.log('⚠️  DATABASE_URL não configurada. Pulando migrations.')}\"",
+    "prestart": "node build-database-url.js && npx prisma migrate deploy || echo '⚠️  Migrations falharam ou DATABASE_URL não configurada'",
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
     "prisma:generate": "prisma generate",
