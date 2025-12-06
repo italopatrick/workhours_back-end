@@ -71,3 +71,6 @@ logger.info('Operação complexa', {
 // - Use LOG_LEVEL=debug no .env para ver todos os logs
 // - Use LOG_LEVEL=error no .env para ver apenas erros em produção
 
+
+
+

@@ -1,21 +1,21 @@
 import express from 'express';
 import { protect, admin } from '../middleware/auth.js';
-import HourBankRecord from '../models/HourBankRecord.js';
-import User from '../models/User.js';
-import Overtime from '../models/Overtime.js';
-import { CompanySettings } from '../models/companySettings.js';
+import prisma from '../config/database.js';
+import { findUserById } from '../models/user.model.js';
+import { getOrCreateSettings } from '../models/companySettings.model.js';
 import { logAudit, getRequestMetadata } from '../middleware/audit.js';
 import { formatDateForDisplay } from '../utils/dateFormatter.js';
 import logger from '../utils/logger.js';
-import mongoose from 'mongoose';
 
 const router = express.Router();
 
 // Helper: Calcular saldo do banco de horas
 const calculateBalance = async (employeeId) => {
   // Buscar todos os registros (aprovados e pendentes)
-  const allRecords = await HourBankRecord.find({
-    employeeId
+  const allRecords = await prisma.hourBankRecord.findMany({
+    where: {
+      employeeId
+    }
   });
 
   let totalBalance = 0;
@@ -50,7 +50,7 @@ const calculateBalance = async (employeeId) => {
 
 // Helper: Buscar limites
 const getLimits = async (employeeId) => {
-  const settings = await CompanySettings.findOne();
+  const settings = await getOrCreateSettings();
   
   return {
     accumulationLimit: settings?.defaultAccumulationLimit || 0,
@@ -61,16 +61,16 @@ const getLimits = async (employeeId) => {
 // GET /hour-bank/balance - Buscar saldo do banco de horas
 router.get('/balance', protect, async (req, res) => {
   try {
-    const targetEmployeeId = req.query.employeeId || req.user._id.toString();
+    const targetEmployeeId = req.query.employeeId || req.user.id;
     
     // Se não for admin e tentar buscar de outro funcionário, negar
-    if (req.user.role !== 'admin' && targetEmployeeId !== req.user._id.toString()) {
+    if (req.user.role !== 'admin' && targetEmployeeId !== req.user.id) {
       return res.status(403).json({ 
         error: 'Você não tem permissão para visualizar o saldo de outros funcionários' 
       });
     }
 
-    const employee = await User.findById(targetEmployeeId);
+    const employee = await findUserById(targetEmployeeId);
     if (!employee) {
       return res.status(404).json({ error: 'Funcionário não encontrado' });
     }
@@ -110,53 +110,71 @@ router.get('/records', protect, async (req, res) => {
   try {
     const { employeeId, startDate, endDate, type, status } = req.query;
     
-    let targetEmployeeId = req.user._id.toString();
+    let targetEmployeeId = req.user.id;
     
     // Se for admin e forneceu employeeId, usa o fornecido
     if (req.user.role === 'admin' && employeeId) {
       targetEmployeeId = employeeId;
-    } else if (req.user.role !== 'admin' && employeeId && employeeId !== req.user._id.toString()) {
+    } else if (req.user.role !== 'admin' && employeeId && employeeId !== req.user.id) {
       // Funcionário tentando buscar de outro funcionário
       return res.status(403).json({ 
         error: 'Você não tem permissão para visualizar registros de outros funcionários' 
       });
     }
 
-    const query = { employeeId: targetEmployeeId };
+    const prismaQuery = { employeeId: targetEmployeeId };
     
     if (startDate) {
-      query.date = { ...query.date, $gte: startDate };
+      prismaQuery.date = { ...prismaQuery.date, gte: startDate };
     }
     if (endDate) {
-      query.date = { ...query.date, $lte: endDate };
+      prismaQuery.date = { ...prismaQuery.date, lte: endDate };
     }
     if (type && (type === 'credit' || type === 'debit')) {
-      query.type = type;
+      prismaQuery.type = type;
     }
     if (status && ['pending', 'approved', 'rejected'].includes(status)) {
-      query.status = status;
+      prismaQuery.status = status;
     }
 
-    const records = await HourBankRecord.find(query)
-      .populate('employeeId', 'name email')
-      .populate('createdBy', 'name email')
-      .populate('overtimeRecordId')
-      .sort({ date: -1, createdAt: -1 })
-      .lean();
+    const records = await prisma.hourBankRecord.findMany({
+      where: prismaQuery,
+      include: {
+        employee: {
+          select: {
+            id: true,
+            name: true,
+            email: true
+          }
+        },
+        creator: {
+          select: {
+            id: true,
+            name: true,
+            email: true
+          }
+        },
+        overtimeRecord: true
+      },
+      orderBy: [
+        { date: 'desc' },
+        { createdAt: 'desc' }
+      ]
+    });
 
     // Formatar resposta
     const formattedRecords = records.map(record => ({
-      id: record._id,
-      employeeId: record.employeeId._id || record.employeeId,
-      employeeName: record.employeeId?.name || 'N/A',
+      id: record.id,
+      employeeId: record.employee?.id || record.employeeId,
+      employeeName: record.employee?.name || 'N/A',
       date: record.date,
       type: record.type,
       hours: record.hours,
       reason: record.reason,
-      overtimeRecordId: record.overtimeRecordId?._id || record.overtimeRecordId || null,
+      overtimeRecordId: record.overtimeRecord?.id || record.overtimeRecordId || null,
       status: record.status,
-      createdBy: record.createdBy?._id || record.createdBy,
-      createdByName: record.createdBy?.name || 'N/A',
+      createdBy: record.creator?.id || record.createdBy,
+      createdByName: record.creator?.name || 'N/A',
       createdAt: record.createdAt,
       updatedAt: record.updatedAt
     }));
@@ -180,14 +198,14 @@ router.post('/credit', protect, async (req, res) => {
     }
 
     // Validar se o usuário tem permissão
-    if (req.user.role !== 'admin' && employeeId !== req.user._id.toString()) {
+    if (req.user.role !== 'admin' && employeeId !== req.user.id) {
       return res.status(403).json({ 
         error: 'Você só pode criar crédito para si mesmo' 
       });
     }
 
     // Verificar se funcionário existe
-    const employee = await User.findById(employeeId);
+    const employee = await findUserById(employeeId);
     if (!employee) {
       return res.status(404).json({ error: 'Funcionário não encontrado' });
     }
@@ -211,26 +229,26 @@ router.post('/credit', protect, async (req, res) => {
     }
 
     // Criar registro de crédito
-    const record = new HourBankRecord({
-      employeeId,
-      date,
-      type: 'credit',
-      hours: Number(hours),
-      reason,
-      overtimeRecordId: overtimeRecordId || null,
-      status: 'pending', // Pendente até aprovação
-      createdBy: req.user._id
+    const record = await prisma.hourBankRecord.create({
+      data: {
+        employeeId,
+        date,
+        type: 'credit',
+        hours: Number(hours),
+        reason,
+        overtimeRecordId: overtimeRecordId || null,
+        status: 'pending', // Pendente até aprovação
+        createdBy: req.user.id
+      }
     });
-
-    await record.save();
 
     // Registrar log de auditoria
     const requestMeta = getRequestMetadata(req);
     await logAudit({
       action: 'hourbank_credit_created',
       entityType: 'hourbank',
-      entityId: record._id,
-      userId: req.user._id,
+      entityId: record.id,
+      userId: req.user.id,
       targetUserId: employeeId,
       description: `Crédito no banco de horas criado: ${hours}h em ${formatDateForDisplay(date)}`,
       metadata: {
@@ -242,27 +260,24 @@ router.post('/credit', protect, async (req, res) => {
       ...requestMeta
     });
 
-    // Popular campos relacionados
-    await record.populate('employeeId', 'name email');
-    await record.populate('createdBy', 'name email');
-
+    // Buscar campos relacionados (já foi feito acima)
     res.status(201).json({
-      id: record._id,
-      employeeId: record.employeeId._id,
-      employeeName: record.employeeId.name,
-      date: record.date,
-      type: record.type,
-      hours: record.hours,
-      reason: record.reason,
-      overtimeRecordId: record.overtimeRecordId || null,
-      status: record.status,
-      createdBy: record.createdBy._id,
-      createdByName: record.createdBy.name,
-      createdAt: record.createdAt,
-      updatedAt: record.updatedAt
+      id: recordWithRelations.id,
+      employeeId: recordWithRelations.employee.id,
+      employeeName: recordWithRelations.employee.name,
+      date: recordWithRelations.date,
+      type: recordWithRelations.type,
+      hours: recordWithRelations.hours,
+      reason: recordWithRelations.reason,
+      overtimeRecordId: recordWithRelations.overtimeRecordId || null,
+      status: recordWithRelations.status,
+      createdBy: recordWithRelations.creator.id,
+      createdByName: recordWithRelations.creator.name,
+      createdAt: recordWithRelations.createdAt,
+      updatedAt: recordWithRelations.updatedAt
     });
   } catch (error) {
-    logger.logError(error, { context: 'Criar crédito no banco de horas', employeeId, userId: req.user?._id });
+    logger.logError(error, { context: 'Criar crédito no banco de horas', employeeId, userId: req.user?.id });
     res.status(500).json({ error: 'Erro ao criar crédito no banco de horas' });
   }
 });
@@ -279,7 +294,7 @@ router.post('/debit', protect, admin, async (req, res) => {
     }
 
     // Verificar se funcionário existe
-    const employee = await User.findById(employeeId);
+    const employee = await findUserById(employeeId);
     if (!employee) {
       return res.status(404).json({ error: 'Funcionário não encontrado' });
     }
@@ -302,11 +317,13 @@ router.post('/debit', protect, admin, async (req, res) => {
       const startOfMonth = `${year}-${month.padStart(2, '0')}-01`;
       const endOfMonth = `${year}-${month.padStart(2, '0')}-31`;
 
-      const monthlyDebits = await HourBankRecord.find({
-        employeeId,
-        type: 'debit',
-        status: 'approved',
-        date: { $gte: startOfMonth, $lte: endOfMonth }
+      const monthlyDebits = await prisma.hourBankRecord.findMany({
+        where: {
+          employeeId,
+          type: 'debit',
+          status: 'approved',
+          date: { gte: startOfMonth, lte: endOfMonth }
+        }
       });
 
       const totalMonthlyDebit = monthlyDebits.reduce((sum, record) => sum + record.hours, 0);
@@ -323,19 +340,19 @@ router.post('/debit', protect, admin, async (req, res) => {
     }
 
     // Criar registro de débito (automaticamente aprovado quando criado por admin)
-    const record = new HourBankRecord({
-      employeeId,
-      date,
-      type: 'debit',
-      hours: Number(hours),
-      reason,
-      status: 'approved', // Aprovado automaticamente quando criado por admin
-      createdBy: req.user._id,
-      approvedBy: req.user._id, // Admin que criou já aprova
-      approvedAt: new Date()
+    const record = await prisma.hourBankRecord.create({
+      data: {
+        employeeId,
+        date,
+        type: 'debit',
+        hours: Number(hours),
+        reason,
+        status: 'approved', // Aprovado automaticamente quando criado por admin
+        createdBy: req.user.id,
+        approvedBy: req.user.id, // Admin que criou já aprova
+        approvedAt: new Date()
+      }
     });
-
-    await record.save();
 
     // Registrar log de auditoria
     const requestMeta = getRequestMetadata(req);
@@ -355,26 +372,43 @@ router.post('/debit', protect, admin, async (req, res) => {
       ...requestMeta
     });
 
-    // Popular campos relacionados
-    await record.populate('employeeId', 'name email');
-    await record.populate('createdBy', 'name email');
+    // Buscar campos relacionados
+    const recordWithRelations = await prisma.hourBankRecord.findUnique({
+      where: { id: record.id },
+      include: {
+        employee: {
+          select: {
+            id: true,
+            name: true,
+            email: true
+          }
+        },
+        creator: {
+          select: {
+            id: true,
+            name: true,
+            email: true
+          }
+        }
+      }
+    });
 
     res.status(201).json({
-      id: record._id,
-      employeeId: record.employeeId._id,
-      employeeName: record.employeeId.name,
-      date: record.date,
-      type: record.type,
-      hours: record.hours,
-      reason: record.reason,
-      status: record.status,
-      createdBy: record.createdBy._id,
-      createdByName: record.createdBy.name,
-      createdAt: record.createdAt,
-      updatedAt: record.updatedAt
+      id: recordWithRelations.id,
+      employeeId: recordWithRelations.employee.id,
+      employeeName: recordWithRelations.employee.name,
+      date: recordWithRelations.date,
+      type: recordWithRelations.type,
+      hours: recordWithRelations.hours,
+      reason: recordWithRelations.reason,
+      status: recordWithRelations.status,
+      createdBy: recordWithRelations.creator.id,
+      createdByName: recordWithRelations.creator.name,
+      createdAt: recordWithRelations.createdAt,
+      updatedAt: recordWithRelations.updatedAt
     });
   } catch (error) {
-    logger.logError(error, { context: 'Criar débito no banco de horas', employeeId, userId: req.user?._id });
+    logger.logError(error, { context: 'Criar débito no banco de horas', employeeId, userId: req.user?.id });
     res.status(500).json({ error: 'Erro ao criar débito no banco de horas' });
   }
 });
@@ -391,7 +425,9 @@ router.patch('/records/:id/status', protect, admin, async (req, res) => {
       });
     }
 
-    const record = await HourBankRecord.findById(id);
+    const record = await prisma.hourBankRecord.findUnique({
+      where: { id }
+    });
     if (!record) {
       return res.status(404).json({ error: 'Registro não encontrado' });
     }
@@ -407,8 +443,8 @@ router.patch('/records/:id/status', protect, admin, async (req, res) => {
 
     // Se está aprovando um crédito, verificar limite de acúmulo
     if (status === 'approved' && record.type === 'credit') {
-      const balance = await calculateBalance(record.employeeId.toString());
-      const limits = await getLimits(record.employeeId.toString());
+      const balance = await calculateBalance(record.employeeId);
+      const limits = await getLimits(record.employeeId);
 
       if (limits.accumulationLimit > 0) {
         const totalAfterApproval = balance.totalBalance + record.hours;
@@ -425,7 +461,7 @@ router.patch('/records/:id/status', protect, admin, async (req, res) => {
 
     // Se está aprovando um débito, verificar saldo disponível
     if (status === 'approved' && record.type === 'debit') {
-      const balance = await calculateBalance(record.employeeId.toString());
+      const balance = await calculateBalance(record.employeeId);
       if (balance.availableBalance < record.hours) {
         return res.status(400).json({
           error: `Saldo insuficiente. Saldo disponível: ${balance.availableBalance}h, Débito: ${record.hours}h`,
@@ -438,23 +474,31 @@ router.patch('/records/:id/status', protect, admin, async (req, res) => {
     // Preparar campos de atualização
     const updateData = { status };
     if (status === 'approved') {
-      updateData.approvedBy = req.user._id;
+      updateData.approvedBy = req.user.id;
       updateData.approvedAt = new Date();
       updateData.rejectedBy = null;
       updateData.rejectedAt = null;
     } else if (status === 'rejected') {
-      updateData.rejectedBy = req.user._id;
+      updateData.rejectedBy = req.user.id;
       updateData.rejectedAt = new Date();
       updateData.approvedBy = null;
       updateData.approvedAt = null;
     }
 
     // Atualizar registro
-    const updatedRecord = await HourBankRecord.findByIdAndUpdate(
-      id,
-      updateData,
-      { new: true }
-    ).populate('employeeId', 'name email');
+    const updatedRecord = await prisma.hourBankRecord.update({
+      where: { id },
+      data: updateData,
+      include: {
+        employee: {
+          select: {
+            id: true,
+            name: true,
+            email: true
+          }
+        }
+      }
+    });
 
     // Registrar log de auditoria
     const requestMeta = getRequestMetadata(req);
@@ -462,9 +506,9 @@ router.patch('/records/:id/status', protect, admin, async (req, res) => {
     await logAudit({
       action: actionName,
       entityType: 'hourbank',
-      entityId: record._id,
-      userId: req.user._id,
-      targetUserId: record.employeeId,
+        entityId: record.id,
+        userId: req.user.id,
+        targetUserId: record.employeeId,
       description: `Registro de banco de horas ${status === 'approved' ? 'aprovado' : 'rejeitado'}: ${record.hours}h (${record.type}) em ${formatDateForDisplay(record.date)}`,
       metadata: {
         hours: record.hours,
@@ -476,20 +520,31 @@ router.patch('/records/:id/status', protect, admin, async (req, res) => {
       ...requestMeta
     });
 
-    // Popular campos relacionados para resposta
-    await updatedRecord.populate('createdBy', 'name email');
+    // Buscar campos relacionados para resposta
+    const recordWithCreator = await prisma.hourBankRecord.findUnique({
+      where: { id: updatedRecord.id },
+      include: {
+        creator: {
+          select: {
+            id: true,
+            name: true,
+            email: true
+          }
+        }
+      }
+    });
 
     res.json({
-      id: updatedRecord._id,
-      employeeId: updatedRecord.employeeId._id,
-      employeeName: updatedRecord.employeeId.name,
+      id: updatedRecord.id,
+      employeeId: updatedRecord.employee.id,
+      employeeName: updatedRecord.employee.name,
       date: updatedRecord.date,
       type: updatedRecord.type,
       hours: updatedRecord.hours,
       reason: updatedRecord.reason,
       status: updatedRecord.status,
-      createdBy: updatedRecord.createdBy._id,
-      createdByName: updatedRecord.createdBy.name,
+      createdBy: recordWithCreator.creator.id,
+      createdByName: recordWithCreator.creator.name,
       approvedBy: updatedRecord.approvedBy || null,
       rejectedBy: updatedRecord.rejectedBy || null,
       approvedAt: updatedRecord.approvedAt || null,
@@ -498,7 +553,7 @@ router.patch('/records/:id/status', protect, admin, async (req, res) => {
       updatedAt: updatedRecord.updatedAt
     });
   } catch (error) {
-    logger.logError(error, { context: 'Atualizar status do registro do banco de horas', recordId: id, userId: req.user?._id });
+    logger.logError(error, { context: 'Atualizar status do registro do banco de horas', recordId: id, userId: req.user?.id });
     res.status(500).json({ error: 'Erro ao atualizar status do registro' });
   }
 });
@@ -520,10 +575,10 @@ router.get('/limits', protect, async (req, res) => {
       });
     }
 
-    const targetEmployeeId = employeeId || req.user._id.toString();
+    const targetEmployeeId = employeeId || req.user.id;
     
     // Se não for admin e tentar verificar de outro funcionário, negar
-    if (req.user.role !== 'admin' && targetEmployeeId !== req.user._id.toString()) {
+    if (req.user.role !== 'admin' && targetEmployeeId !== req.user.id) {
       return res.status(403).json({ 
         error: 'Você não tem permissão para verificar limites de outros funcionários' 
       });
@@ -558,11 +613,13 @@ router.get('/limits', protect, async (req, res) => {
         const startOfMonth = `${year}-${month.padStart(2, '0')}-01`;
         const endOfMonth = `${year}-${month.padStart(2, '0')}-31`;
 
-        const monthlyDebits = await HourBankRecord.find({
-          employeeId: targetEmployeeId,
-          type: 'debit',
-          status: 'approved',
-          date: { $gte: startOfMonth, $lte: endOfMonth }
+        const monthlyDebits = await prisma.hourBankRecord.findMany({
+          where: {
+            employeeId: targetEmployeeId,
+            type: 'debit',
+            status: 'approved',
+            date: { gte: startOfMonth, lte: endOfMonth }
+          }
         });
 
         const totalMonthlyDebit = monthlyDebits.reduce((sum, record) => sum + record.hours, 0);

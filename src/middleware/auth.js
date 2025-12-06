@@ -1,5 +1,5 @@
 import jwt from 'jsonwebtoken';
-import User from '../models/User.js';
+import { findUserById } from '../models/user.model.js';
 import logger from '../utils/logger.js';
 
 export const protect = async (req, res, next) => {
@@ -16,7 +16,7 @@ export const protect = async (req, res, next) => {
 
     try {
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      const user = await User.findById(decoded.id).select('-password');
+      const user = await findUserById(decoded.id, false);
       
       if (!user) {
         logger.warn('Usuário não encontrado', { userId: decoded.id });
@@ -24,7 +24,7 @@ export const protect = async (req, res, next) => {
       }
 
       logger.debug('Usuário autenticado', { 
-        userId: user._id, 
+        userId: user.id, 
         userName: user.name,
         userRole: user.role 
       });
@@ -64,7 +64,7 @@ export const admin = (req, res, next) => {
 
   if (req.user.role !== 'admin') {
     logger.warn('Acesso negado: usuário não é admin', {
-      userId: req.user._id,
+      userId: req.user.id,
       userName: req.user.name,
       userRole: req.user.role,
       url: req.originalUrl || req.url
@@ -73,7 +73,7 @@ export const admin = (req, res, next) => {
   }
 
   logger.debug('Acesso de admin concedido', {
-    userId: req.user._id,
+    userId: req.user.id,
     userName: req.user.name
   });
   next();

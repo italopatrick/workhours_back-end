@@ -1,0 +1,203 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  admin
+  employee
+}
+
+enum OvertimeStatus {
+  pending
+  approved
+  rejected
+}
+
+enum HourBankType {
+  credit
+  debit
+}
+
+enum HourBankStatus {
+  pending
+  approved
+  rejected
+}
+
+enum AuditAction {
+  overtime_created
+  overtime_approved
+  overtime_rejected
+  overtime_updated
+  hourbank_credit_created
+  hourbank_debit_created
+  hourbank_approved
+  hourbank_rejected
+  employee_created
+  employee_deleted
+  employee_role_changed
+  employee_limit_changed
+  employee_exception_added
+  employee_exception_removed
+  settings_updated
+  settings_logo_updated
+}
+
+enum EntityType {
+  overtime
+  hourbank
+  employee
+  settings
+}
+
+model User {
+  id                String   @id @default(uuid())
+  email             String   @unique
+  password         String?
+  role             UserRole @default(employee)
+  name             String
+  department       String
+  externalId       String?  @unique
+  externalAuth     Boolean  @default(false)
+  overtimeLimit    Float?
+  overtimeExceptions Json?  // Array of { month: number, year: number, additionalHours: number }
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  // Relations
+  overtimes        Overtime[]
+  hourBankRecords  HourBankRecord[]
+  auditLogs        AuditLog[] @relation("UserAuditLogs")
+  targetAuditLogs  AuditLog[] @relation("TargetUserAuditLogs")
+  createdOvertimes Overtime[] @relation("CreatedBy")
+  approvedOvertimes Overtime[] @relation("ApprovedBy")
+  rejectedOvertimes Overtime[] @relation("RejectedBy")
+  createdHourBankRecords HourBankRecord[] @relation("CreatedByHourBank")
+  approvedHourBankRecords HourBankRecord[] @relation("ApprovedByHourBank")
+  rejectedHourBankRecords HourBankRecord[] @relation("RejectedByHourBank")
+
+  @@index([email])
+  @@index([role])
+  @@index([externalId])
+  @@map("users")
+}
+
+model Overtime {
+  id          String         @id @default(uuid())
+  employeeId  String
+  date        String         // Format: YYYY-MM-DD
+  startTime   String         // Format: HH:mm
+  endTime     String         // Format: HH:mm
+  hours       Float
+  reason      String
+  status      OvertimeStatus @default(pending)
+  createdBy   String?
+  approvedBy  String?
+  rejectedBy  String?
+  approvedAt  DateTime?
+  rejectedAt  DateTime?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  // Relations
+  employee    User           @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  creator     User?          @relation("CreatedBy", fields: [createdBy], references: [id])
+  approver    User?          @relation("ApprovedBy", fields: [approvedBy], references: [id])
+  rejector    User?          @relation("RejectedBy", fields: [rejectedBy], references: [id])
+  hourBankRecords HourBankRecord[]
+
+  @@index([employeeId])
+  @@index([date])
+  @@index([status])
+  @@index([employeeId, date])
+  @@map("overtimes")
+}
+
+model HourBankRecord {
+  id              String           @id @default(uuid())
+  employeeId      String
+  date            String           // Format: YYYY-MM-DD
+  type            HourBankType
+  hours           Float
+  reason          String
+  overtimeRecordId String?
+  status          HourBankStatus  @default(pending)
+  createdBy       String
+  approvedBy      String?
+  rejectedBy      String?
+  approvedAt      DateTime?
+  rejectedAt      DateTime?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  // Relations
+  employee        User             @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  overtimeRecord  Overtime?        @relation(fields: [overtimeRecordId], references: [id])
+  creator         User             @relation("CreatedByHourBank", fields: [createdBy], references: [id])
+  approver        User?            @relation("ApprovedByHourBank", fields: [approvedBy], references: [id])
+  rejector        User?            @relation("RejectedByHourBank", fields: [rejectedBy], references: [id])
+
+  @@index([employeeId])
+  @@index([date])
+  @@index([status])
+  @@index([employeeId, date])
+  @@index([employeeId, status])
+  @@index([overtimeRecordId])
+  @@map("hour_bank_records")
+}
+
+model AuditLog {
+  id          String      @id @default(uuid())
+  action      AuditAction
+  entityType  EntityType
+  entityId    String      // Can be UUID or other identifier
+  userId      String
+  targetUserId String?
+  description String
+  metadata    Json?       @default("{}")
+  ipAddress   String?
+  userAgent   String?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  // Relations
+  user        User        @relation("UserAuditLogs", fields: [userId], references: [id])
+  targetUser  User?       @relation("TargetUserAuditLogs", fields: [targetUserId], references: [id])
+
+  @@index([userId])
+  @@index([entityType])
+  @@index([entityId])
+  @@index([action])
+  @@index([targetUserId])
+  @@index([createdAt(sort: Desc)])
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([entityType, entityId])
+  @@index([action, createdAt(sort: Desc)])
+  @@map("audit_logs")
+}
+
+model CompanySettings {
+  id                      String   @id @default(uuid())
+  name                    String   @default("")
+  logo                    Bytes?   // BYTEA in PostgreSQL
+  logoContentType         String?
+  reportHeader            String   @default("")
+  reportFooter            String   @default("")
+  managerEmail            String?
+  defaultOvertimeLimit    Float    @default(40)
+  defaultAccumulationLimit Float    @default(0)
+  defaultUsageLimit       Float    @default(0)
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  @@map("company_settings")
+}
+
