@@ -140,7 +140,7 @@ router.put('/', protect, admin, upload.single('logo'), async (req, res) => {
     
     // Registrar log de auditoria
     const requestMeta = getRequestMetadata(req);
-    const action = logoUpdated ? 'settings_updated' : 'settings_updated';
+    const action = logoUpdated ? 'settings_logo_updated' : 'settings_updated';
     await logAudit({
       action,
       entityType: 'settings',

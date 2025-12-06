@@ -71,7 +71,7 @@ router.get('/csv', protect, async (req, res) => {
     await csvWriter.writeRecords(records);
     res.download('overtime-report.csv');
   } catch (error) {
-    logger.logError(error, { context: 'Gerar relatório PDF', userId: req.user?._id });
+    logger.logError(error, { context: 'Gerar relatório CSV', userId: req.user?._id });
     res.status(500).json({ message: 'Server error' });
   }
 });
