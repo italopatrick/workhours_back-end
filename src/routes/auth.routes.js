@@ -337,7 +337,7 @@ router.post('/link-external-account', async (req, res) => {
       if (user) {
         // Se o usuário já existir, vincular o ID externo
         user = await updateUser(user.id, {
-          externalId,
+          externalId: String(externalId), // Garantir que é string
           externalAuth: true
         });
         logger.info('Existing user linked to external account', { userId: user.id, userName: user.name, email });
@@ -348,7 +348,7 @@ router.post('/link-external-account', async (req, res) => {
           email,
           department: externalUserData.department || externalUserData.departamento || 'N/A',
           role: 'employee',
-          externalId,
+          externalId: String(externalId), // Garantir que é string
           externalAuth: true,
           // Senha não é necessária para usuários externos
           password: Math.random().toString(36).slice(-10) // Senha aleatória que nunca será usada
