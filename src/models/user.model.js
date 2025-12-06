@@ -39,6 +39,9 @@ export async function createUser(userData) {
     hashedPassword = await hashPassword(password);
   }
 
+  // Converter externalId para string se fornecido
+  const externalIdString = externalId ? String(externalId) : null;
+
   const user = await prisma.user.create({
     data: {
       name,
@@ -46,7 +49,7 @@ export async function createUser(userData) {
       password: hashedPassword,
       department,
       role,
-      externalId,
+      externalId: externalIdString,
       externalAuth,
       overtimeLimit,
       overtimeExceptions: overtimeExceptions || null
@@ -112,12 +115,15 @@ export async function findUserByEmail(email, includePassword = false) {
 
 /**
  * Find user by external ID
- * @param {string} externalId - External ID
+ * @param {string|number} externalId - External ID (will be converted to string)
  * @returns {Promise<Object|null>} User or null
  */
 export async function findUserByExternalId(externalId) {
+  // Converter para string se necessário (Prisma espera String)
+  const externalIdString = String(externalId);
+  
   const user = await prisma.user.findUnique({
-    where: { externalId }
+    where: { externalId: externalIdString }
   });
 
   return user;
@@ -165,6 +171,11 @@ export async function updateUser(id, data) {
   // If password is being updated and user is not external, hash it
   if (data.password && !data.externalAuth) {
     data.password = await hashPassword(data.password);
+  }
+
+  // Converter externalId para string se fornecido
+  if (data.externalId !== undefined) {
+    data.externalId = data.externalId ? String(data.externalId) : null;
   }
 
   const user = await prisma.user.update({
