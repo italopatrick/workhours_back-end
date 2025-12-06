@@ -1,13 +1,13 @@
-import AuditLog from '../models/AuditLog.js';
+import prisma from '../config/database.js';
 
 /**
  * Registra uma ação no log de auditoria
  * @param {Object} params - Parâmetros do log
  * @param {String} params.action - Tipo de ação (enum definido no modelo)
  * @param {String} params.entityType - Tipo de entidade (overtime, hourbank, employee, settings)
- * @param {String|ObjectId} params.entityId - ID da entidade afetada
- * @param {String|ObjectId} params.userId - ID do usuário que executou a ação
- * @param {String|ObjectId} [params.targetUserId] - ID do usuário afetado (opcional)
+ * @param {String} params.entityId - ID da entidade afetada
+ * @param {String} params.userId - ID do usuário que executou a ação
+ * @param {String} [params.targetUserId] - ID do usuário afetado (opcional)
  * @param {String} params.description - Descrição da ação
  * @param {Object} [params.metadata] - Metadados adicionais
  * @param {String} [params.ipAddress] - IP de origem
@@ -25,19 +25,19 @@ export async function logAudit({
   userAgent = null
 }) {
   try {
-    const auditLog = new AuditLog({
-      action,
-      entityType,
-      entityId,
-      userId,
-      targetUserId: targetUserId || null,
-      description,
-      metadata,
-      ipAddress,
-      userAgent
+    await prisma.auditLog.create({
+      data: {
+        action,
+        entityType,
+        entityId: String(entityId),
+        userId,
+        targetUserId: targetUserId || null,
+        description,
+        metadata: metadata || {},
+        ipAddress,
+        userAgent
+      }
     });
-
-    await auditLog.save();
     // Log apenas em caso de erro para não poluir os logs
   } catch (error) {
     // Não deve interromper o fluxo da aplicação se o log falhar

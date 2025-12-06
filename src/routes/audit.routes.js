@@ -1,7 +1,6 @@
 import express from 'express';
 import { protect, admin } from '../middleware/auth.js';
-import AuditLog from '../models/AuditLog.js';
-import User from '../models/User.js';
+import prisma from '../config/database.js';
 import logger from '../utils/logger.js';
 
 const router = express.Router();
@@ -39,17 +38,24 @@ router.get('/logs', protect, admin, async (req, res) => {
       query.targetUserId = targetUserId;
     }
 
+    // Construir query do Prisma
+    const prismaQuery = {};
+    if (action) prismaQuery.action = action;
+    if (entityType) prismaQuery.entityType = entityType;
+    if (userId) prismaQuery.userId = userId;
+    if (targetUserId) prismaQuery.targetUserId = targetUserId;
+
     // Filtro por data
     if (startDate || endDate) {
-      query.createdAt = {};
+      prismaQuery.createdAt = {};
       if (startDate) {
-        query.createdAt.$gte = new Date(startDate);
+        prismaQuery.createdAt.gte = new Date(startDate);
       }
       if (endDate) {
         // Adiciona 1 dia e subtrai 1ms para incluir o dia inteiro
         const end = new Date(endDate);
         end.setHours(23, 59, 59, 999);
-        query.createdAt.$lte = end;
+        prismaQuery.createdAt.lte = end;
       }
     }
 
@@ -57,30 +63,46 @@ router.get('/logs', protect, admin, async (req, res) => {
     const skip = (parseInt(page) - 1) * parseInt(limit);
     const pageLimit = parseInt(limit);
 
-    // Buscar logs com populate dos usuários
-    const logs = await AuditLog.find(query)
-      .populate('userId', 'name email role')
-      .populate('targetUserId', 'name email')
-      .sort({ createdAt: -1 }) // Mais recentes primeiro
-      .skip(skip)
-      .limit(pageLimit)
-      .lean();
+    // Buscar logs com include dos usuários
+    const logs = await prisma.auditLog.findMany({
+      where: prismaQuery,
+      include: {
+        user: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            role: true
+          }
+        },
+        targetUser: {
+          select: {
+            id: true,
+            name: true,
+            email: true
+          }
+        }
+      },
+      orderBy: { createdAt: 'desc' },
+      skip,
+      take: pageLimit
+    });
 
     // Contar total de registros
-    const total = await AuditLog.countDocuments(query);
+    const total = await prisma.auditLog.count({ where: prismaQuery });
 
     // Formatar resposta
     const formattedLogs = logs.map(log => ({
-      id: log._id,
+      id: log.id,
       action: log.action,
       entityType: log.entityType,
       entityId: log.entityId,
-      userId: log.userId?._id || log.userId,
-      userName: log.userId?.name || 'Usuário não encontrado',
-      userEmail: log.userId?.email || '',
-      userRole: log.userId?.role || '',
-      targetUserId: log.targetUserId?._id || log.targetUserId || null,
-      targetUserName: log.targetUserId?.name || null,
+      userId: log.user?.id || log.userId,
+      userName: log.user?.name || 'Usuário não encontrado',
+      userEmail: log.user?.email || '',
+      userRole: log.user?.role || '',
+      targetUserId: log.targetUser?.id || log.targetUserId || null,
+      targetUserName: log.targetUser?.name || null,
       description: log.description,
       metadata: log.metadata || {},
       ipAddress: log.ipAddress,
@@ -99,7 +121,7 @@ router.get('/logs', protect, admin, async (req, res) => {
       }
     });
   } catch (error) {
-    logger.logError(error, { context: 'Buscar logs de auditoria', userId: req.user?._id });
+    logger.logError(error, { context: 'Buscar logs de auditoria', userId: req.user?.id });
     res.status(500).json({ error: 'Erro ao buscar logs de auditoria' });
   }
 });

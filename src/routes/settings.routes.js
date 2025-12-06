@@ -1,7 +1,8 @@
 import express from 'express';
 import multer from 'multer';
 import { protect, admin } from '../middleware/auth.js';
-import { CompanySettings } from '../models/companySettings.js';
+import { getOrCreateSettings } from '../models/companySettings.model.js';
+import prisma from '../config/database.js';
 import { logAudit, getRequestMetadata } from '../middleware/audit.js';
 import logger from '../utils/logger.js';
 
@@ -11,16 +12,7 @@ const upload = multer();
 // Obter configurações da empresa
 router.get('/', protect, async (req, res) => {
   try {
-    let settings = await CompanySettings.findOne();
-    
-    // Se não existir, cria com valores padrão
-    if (!settings) {
-      settings = await CompanySettings.create({
-        name: '',
-        reportHeader: '',
-        reportFooter: ''
-      });
-    }
+    let settings = await getOrCreateSettings();
 
     // Não envia o buffer da imagem na consulta geral
     const response = {
@@ -48,8 +40,8 @@ router.get('/logo', protect, async (req, res) => {
       return res.status(404).json({ message: 'Logo não encontrado' });
     }
 
-    res.set('Content-Type', settings.logo.contentType);
-    res.send(settings.logo.data);
+    res.set('Content-Type', settings.logoContentType || 'image/png');
+    res.send(settings.logo);
   } catch (error) {
     logger.logError(error, { context: 'Obter logo da empresa' });
     res.status(500).json({ message: 'Erro ao obter logo' });
@@ -73,15 +65,18 @@ router.post('/logo', protect, admin, upload.single('logo'), async (req, res) => 
       contentType: req.file.mimetype
     };
 
-    await settings.save();
+    await prisma.companySettings.update({
+      where: { id: settings.id },
+      data: settings
+    });
     
     // Registrar log de auditoria
     const requestMeta = getRequestMetadata(req);
     await logAudit({
       action: 'settings_logo_updated',
       entityType: 'settings',
-      entityId: settings._id,
-      userId: req.user._id,
+      entityId: settings.id,
+      userId: req.user.id,
       description: `Logo da empresa atualizada`,
       metadata: {
         contentType: req.file.mimetype,
@@ -104,7 +99,16 @@ router.put('/', protect, admin, upload.single('logo'), async (req, res) => {
     let settings = await CompanySettings.findOne();
 
     if (!settings) {
-      settings = new CompanySettings();
+      settings = await prisma.companySettings.create({
+        data: {
+          name: '',
+          reportHeader: '',
+          reportFooter: '',
+          defaultOvertimeLimit: 40,
+          defaultAccumulationLimit: 0,
+          defaultUsageLimit: 0
+        }
+      });
     }
 
     // Salvar valores antigos para auditoria
@@ -136,7 +140,10 @@ router.put('/', protect, admin, upload.single('logo'), async (req, res) => {
       logoUpdated = true;
     }
 
-    await settings.save();
+    await prisma.companySettings.update({
+      where: { id: settings.id },
+      data: settings
+    });
     
     // Registrar log de auditoria
     const requestMeta = getRequestMetadata(req);
@@ -144,19 +151,19 @@ router.put('/', protect, admin, upload.single('logo'), async (req, res) => {
     await logAudit({
       action,
       entityType: 'settings',
-      entityId: settings._id,
-      userId: req.user._id,
+      entityId: settings.id,
+      userId: req.user.id,
       description: `Configurações da empresa atualizadas${logoUpdated ? ' (incluindo logo)' : ''}`,
       metadata: {
         oldValues,
         newValues: {
-          name: settings.name,
-          reportHeader: settings.reportHeader,
-          reportFooter: settings.reportFooter,
-          defaultOvertimeLimit: settings.defaultOvertimeLimit,
-          defaultAccumulationLimit: settings.defaultAccumulationLimit,
-          defaultUsageLimit: settings.defaultUsageLimit,
-          hasLogo: !!settings.logo?.data
+          name: updatedSettings.name,
+          reportHeader: updatedSettings.reportHeader,
+          reportFooter: updatedSettings.reportFooter,
+          defaultOvertimeLimit: updatedSettings.defaultOvertimeLimit,
+          defaultAccumulationLimit: updatedSettings.defaultAccumulationLimit,
+          defaultUsageLimit: updatedSettings.defaultUsageLimit,
+          hasLogo: !!updatedSettings.logo
         },
         logoUpdated
       },

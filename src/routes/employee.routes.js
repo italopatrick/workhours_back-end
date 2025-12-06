@@ -1,6 +1,13 @@
 import express from 'express';
 import { protect, admin } from '../middleware/auth.js';
-import User from '../models/User.js';
+import { 
+  findUsers, 
+  findUserById, 
+  findUserByEmail, 
+  createUser, 
+  updateUser, 
+  deleteUser 
+} from '../models/user.model.js';
 import { logAudit, getRequestMetadata } from '../middleware/audit.js';
 import logger from '../utils/logger.js';
 
@@ -11,15 +18,15 @@ router.get('/', protect, async (req, res) => {
   try {
     // Se for admin, retorna todos os funcionários
     // Se for funcionário normal, retorna apenas funcionários ativos (não admin)
-    const query = req.user.role === 'admin' ? {} : { role: { $ne: 'admin' } };
+    const query = req.user.role === 'admin' ? {} : { role: { not: 'admin' } };
     
-    const employees = await User.find(query)
-      .select('-password')
-      .sort({ name: 1 });
+    const employees = await findUsers(query, {
+      orderBy: { name: 'asc' }
+    });
       
-    // Converte _id para id nos resultados
+    // Formata os resultados
     const formattedEmployees = employees.map(emp => ({
-      id: emp._id,
+      id: emp.id,
       name: emp.name,
       email: emp.email,
       department: emp.department,
@@ -40,7 +47,7 @@ router.post('/', protect, admin, async (req, res) => {
   try {
     const { name, email, password, department, role, overtimeLimit } = req.body;
 
-    const userExists = await User.findOne({ email });
+    const userExists = await findUserByEmail(email);
     if (userExists) {
       return res.status(400).json({ message: 'User already exists' });
     }
@@ -49,7 +56,7 @@ router.post('/', protect, admin, async (req, res) => {
       return res.status(400).json({ message: 'Password is required' });
     }
 
-    const user = await User.create({
+    const user = await createUser({
       name,
       email,
       password,
@@ -63,9 +70,9 @@ router.post('/', protect, admin, async (req, res) => {
     await logAudit({
       action: 'employee_created',
       entityType: 'employee',
-      entityId: user._id,
-      userId: req.user._id,
-      targetUserId: user._id,
+      entityId: user.id,
+      userId: req.user.id,
+      targetUserId: user.id,
       description: `Funcionário criado: ${name} (${email})`,
       metadata: {
         name,
@@ -78,7 +85,7 @@ router.post('/', protect, admin, async (req, res) => {
     });
 
     res.status(201).json({
-      id: user._id,
+      id: user.id,
       name: user.name,
       email: user.email,
       department: user.department,
@@ -95,14 +102,14 @@ router.post('/', protect, admin, async (req, res) => {
 // Delete employee (admin only)
 router.delete('/:id', protect, admin, async (req, res) => {
   try {
-    const user = await User.findById(req.params.id);
+    const user = await findUserById(req.params.id);
     
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
     }
 
     // Não permite deletar o próprio usuário
-    if (user._id.toString() === req.user._id.toString()) {
+    if (user.id === req.user.id) {
       return res.status(400).json({ message: 'You cannot delete your own account' });
     }
 
@@ -111,9 +118,9 @@ router.delete('/:id', protect, admin, async (req, res) => {
     await logAudit({
       action: 'employee_deleted',
       entityType: 'employee',
-      entityId: user._id,
-      userId: req.user._id,
-      targetUserId: user._id,
+      entityId: user.id,
+      userId: req.user.id,
+      targetUserId: user.id,
       description: `Funcionário excluído: ${user.name} (${user.email})`,
       metadata: {
         name: user.name,
@@ -125,7 +132,7 @@ router.delete('/:id', protect, admin, async (req, res) => {
     });
 
     // Deleta o usuário
-    await user.deleteOne();
+    await deleteUser(user.id);
     
     res.json({ message: 'User deleted successfully' });
   } catch (error) {
@@ -139,41 +146,43 @@ router.patch('/:id/overtime-limit', protect, admin, async (req, res) => {
   try {
     const { overtimeLimit } = req.body;
     
-    const user = await User.findById(req.params.id);
+    const user = await findUserById(req.params.id);
     if (!user) {
       return res.status(404).json({ message: 'Funcionário não encontrado' });
     }
 
     const oldLimit = user.overtimeLimit;
+    const newLimit = overtimeLimit === null || overtimeLimit === undefined ? null : Number(overtimeLimit);
     
     // Atualiza o limite de horas extras
-    user.overtimeLimit = overtimeLimit === null || overtimeLimit === undefined ? null : Number(overtimeLimit);
-    await user.save();
+    const updatedUser = await updateUser(user.id, {
+      overtimeLimit: newLimit
+    });
 
     // Registrar log de auditoria
     const requestMeta = getRequestMetadata(req);
     await logAudit({
       action: 'employee_limit_changed',
       entityType: 'employee',
-      entityId: user._id,
-      userId: req.user._id,
-      targetUserId: user._id,
-      description: `Limite de horas extras alterado para ${user.name}: ${oldLimit || 'N/A'}h → ${user.overtimeLimit || 'N/A'}h`,
+      entityId: updatedUser.id,
+      userId: req.user.id,
+      targetUserId: updatedUser.id,
+      description: `Limite de horas extras alterado para ${updatedUser.name}: ${oldLimit || 'N/A'}h → ${updatedUser.overtimeLimit || 'N/A'}h`,
       metadata: {
         oldLimit: oldLimit || null,
-        newLimit: user.overtimeLimit || null
+        newLimit: updatedUser.overtimeLimit || null
       },
       ...requestMeta
     });
 
     res.json({
-      id: user._id,
-      name: user.name,
-      email: user.email,
-      department: user.department,
-      role: user.role,
-      overtimeLimit: user.overtimeLimit,
-      overtimeExceptions: user.overtimeExceptions || []
+      id: updatedUser.id,
+      name: updatedUser.name,
+      email: updatedUser.email,
+      department: updatedUser.department,
+      role: updatedUser.role,
+      overtimeLimit: updatedUser.overtimeLimit,
+      overtimeExceptions: updatedUser.overtimeExceptions || []
     });
   } catch (error) {
     logger.logError(error, { context: 'Atualizar limite de horas extras', employeeId: req.params.id, userId: req.user?._id });
@@ -190,45 +199,44 @@ router.post('/:id/overtime-exception', protect, admin, async (req, res) => {
       return res.status(400).json({ message: 'Mês, ano e horas adicionais são obrigatórios' });
     }
 
-    const user = await User.findById(req.params.id);
+    const user = await findUserById(req.params.id);
     if (!user) {
       return res.status(404).json({ message: 'Funcionário não encontrado' });
     }
 
     // Verifica se já existe uma exceção para este mês/ano
-    const existingExceptionIndex = user.overtimeExceptions?.findIndex(
+    const exceptions = user.overtimeExceptions || [];
+    const existingExceptionIndex = exceptions.findIndex(
       e => e.month === Number(month) && e.year === Number(year)
     );
 
+    let updatedExceptions;
     if (existingExceptionIndex >= 0) {
       // Atualiza a exceção existente
-      if (!user.overtimeExceptions) {
-        user.overtimeExceptions = [];
-      }
-      user.overtimeExceptions[existingExceptionIndex].additionalHours = Number(additionalHours);
+      updatedExceptions = [...exceptions];
+      updatedExceptions[existingExceptionIndex].additionalHours = Number(additionalHours);
     } else {
       // Adiciona nova exceção
-      if (!user.overtimeExceptions) {
-        user.overtimeExceptions = [];
-      }
-      user.overtimeExceptions.push({
+      updatedExceptions = [...exceptions, {
         month: Number(month),
         year: Number(year),
         additionalHours: Number(additionalHours)
-      });
+      }];
     }
 
-    await user.save();
+    const updatedUser = await updateUser(user.id, {
+      overtimeExceptions: updatedExceptions
+    });
 
     // Registrar log de auditoria
     const requestMeta = getRequestMetadata(req);
     await logAudit({
       action: 'employee_exception_added',
       entityType: 'employee',
-      entityId: user._id,
-      userId: req.user._id,
-      targetUserId: user._id,
-      description: `Exceção de horas extras adicionada para ${user.name}: ${additionalHours}h extras em ${month}/${year}`,
+      entityId: updatedUser.id,
+      userId: req.user.id,
+      targetUserId: updatedUser.id,
+      description: `Exceção de horas extras adicionada para ${updatedUser.name}: ${additionalHours}h extras em ${month}/${year}`,
       metadata: {
         month: Number(month),
         year: Number(year),
@@ -239,10 +247,10 @@ router.post('/:id/overtime-exception', protect, admin, async (req, res) => {
     });
 
     res.json({
-      id: user._id,
-      name: user.name,
-      overtimeLimit: user.overtimeLimit,
-      overtimeExceptions: user.overtimeExceptions
+      id: updatedUser.id,
+      name: updatedUser.name,
+      overtimeLimit: updatedUser.overtimeLimit,
+      overtimeExceptions: updatedUser.overtimeExceptions
     });
   } catch (error) {
     logger.logError(error, { context: 'Adicionar exceção de horas extras', employeeId: req.params.id, userId: req.user?._id });
@@ -255,41 +263,52 @@ router.delete('/:id/overtime-exception/:month/:year', protect, admin, async (req
   try {
     const { id, month, year } = req.params;
     
-    const user = await User.findById(id);
+    const user = await findUserById(id);
     if (!user) {
       return res.status(404).json({ message: 'Funcionário não encontrado' });
     }
 
     // Remove a exceção para este mês/ano
-    if (user.overtimeExceptions && user.overtimeExceptions.length > 0) {
-      user.overtimeExceptions = user.overtimeExceptions.filter(
-        e => !(e.month === Number(month) && e.year === Number(year))
-      );
-      await user.save();
+    const exceptions = user.overtimeExceptions || [];
+    const filteredExceptions = exceptions.filter(
+      e => !(e.month === Number(month) && e.year === Number(year))
+    );
+
+    if (exceptions.length !== filteredExceptions.length) {
+      const updatedUser = await updateUser(user.id, {
+        overtimeExceptions: filteredExceptions
+      });
 
       // Registrar log de auditoria
       const requestMeta = getRequestMetadata(req);
       await logAudit({
         action: 'employee_exception_removed',
         entityType: 'employee',
-        entityId: user._id,
-        userId: req.user._id,
-        targetUserId: user._id,
-        description: `Exceção de horas extras removida para ${user.name}: mês ${month}/${year}`,
+        entityId: updatedUser.id,
+        userId: req.user.id,
+        targetUserId: updatedUser.id,
+        description: `Exceção de horas extras removida para ${updatedUser.name}: mês ${month}/${year}`,
         metadata: {
           month: Number(month),
           year: Number(year)
         },
         ...requestMeta
       });
-    }
 
-    res.json({
-      id: user._id,
-      name: user.name,
-      overtimeLimit: user.overtimeLimit,
-      overtimeExceptions: user.overtimeExceptions
-    });
+      res.json({
+        id: updatedUser.id,
+        name: updatedUser.name,
+        overtimeLimit: updatedUser.overtimeLimit,
+        overtimeExceptions: updatedUser.overtimeExceptions
+      });
+    } else {
+      res.json({
+        id: user.id,
+        name: user.name,
+        overtimeLimit: user.overtimeLimit,
+        overtimeExceptions: user.overtimeExceptions
+      });
+    }
   } catch (error) {
     logger.logError(error, { context: 'Remover exceção de horas extras', employeeId: req.params.id, userId: req.user?._id });
     res.status(500).json({ message: 'Erro no servidor', error: error.message });
@@ -305,31 +324,30 @@ router.patch('/:id/role', protect, admin, async (req, res) => {
       return res.status(400).json({ message: 'Role inválida. Use "admin" ou "employee"' });
     }
 
-    const user = await User.findById(req.params.id);
+    const user = await findUserById(req.params.id);
     if (!user) {
       return res.status(404).json({ message: 'Funcionário não encontrado' });
     }
 
     // Não permite alterar a própria role
-    if (user._id.toString() === req.user._id.toString()) {
+    if (user.id === req.user.id) {
       return res.status(400).json({ message: 'Você não pode alterar sua própria função' });
     }
 
     const oldRole = user.role;
 
     // Atualiza a role
-    user.role = role;
-    await user.save();
+    const updatedUser = await updateUser(user.id, { role });
 
     // Registrar log de auditoria
     const requestMeta = getRequestMetadata(req);
     await logAudit({
       action: 'employee_role_changed',
       entityType: 'employee',
-      entityId: user._id,
-      userId: req.user._id,
-      targetUserId: user._id,
-      description: `Role alterada para ${user.name}: ${oldRole} → ${role}`,
+      entityId: updatedUser.id,
+      userId: req.user.id,
+      targetUserId: updatedUser.id,
+      description: `Role alterada para ${updatedUser.name}: ${oldRole} → ${role}`,
       metadata: {
         oldRole,
         newRole: role
@@ -338,13 +356,13 @@ router.patch('/:id/role', protect, admin, async (req, res) => {
     });
 
     res.json({
-      id: user._id,
-      name: user.name,
-      email: user.email,
-      department: user.department,
-      role: user.role,
-      overtimeLimit: user.overtimeLimit,
-      overtimeExceptions: user.overtimeExceptions || []
+      id: updatedUser.id,
+      name: updatedUser.name,
+      email: updatedUser.email,
+      department: updatedUser.department,
+      role: updatedUser.role,
+      overtimeLimit: updatedUser.overtimeLimit,
+      overtimeExceptions: updatedUser.overtimeExceptions || []
     });
   } catch (error) {
     logger.logError(error, { context: 'Atualizar role do funcionário', employeeId: req.params.id, userId: req.user?._id });

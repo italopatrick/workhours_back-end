@@ -15,11 +15,18 @@ WORKDIR /app
 # Copiar arquivos de dependências
 COPY package*.json ./
 
-# Instalar dependências
-RUN npm ci --only=production && npm cache clean --force
+# Instalar dependências (incluindo devDependencies para Prisma CLI)
+RUN npm ci && npm cache clean --force
 
 # Copiar código da aplicação
 COPY . .
+
+# Copiar e configurar script de entrada
+COPY docker-entrypoint.sh /app/docker-entrypoint.sh
+RUN chmod +x /app/docker-entrypoint.sh
+
+# Gerar Prisma Client
+RUN npx prisma generate
 
 # Mudar propriedade dos arquivos para o usuário nodejs
 RUN chown -R nextjs:nodejs /app
@@ -32,5 +39,5 @@ EXPOSE 5000
 ENV NODE_ENV=production
 ENV PORT=5000
 
-# Comando para iniciar a aplicação
-CMD ["npm", "start"]
+# Comando para iniciar a aplicação (executa migrations antes)
+CMD ["/app/docker-entrypoint.sh"]

@@ -2,7 +2,7 @@ import express from 'express';
 import PDFDocument from 'pdfkit';
 import { createObjectCsvWriter } from 'csv-writer';
 import { protect } from '../middleware/auth.js';
-import Overtime from '../models/Overtime.js';
+import prisma from '../config/database.js';
 import logger from '../utils/logger.js';
 
 const router = express.Router();
@@ -24,10 +24,10 @@ router.get('/pdf', protect, async (req, res) => {
     doc.moveDown();
 
     overtime.forEach((record) => {
-      doc.fontSize(12).text(`Employee: ${record.user.name}`);
+      doc.fontSize(12).text(`Employee: ${record.employee.name}`);
       doc.fontSize(10).text(`Date: ${new Date(record.date).toLocaleDateString()}`);
       doc.text(`Time: ${record.startTime} - ${record.endTime}`);
-      doc.text(`Description: ${record.description}`);
+      doc.text(`Description: ${record.reason}`);
       doc.text(`Status: ${record.status}`);
       doc.moveDown();
     });
@@ -60,11 +60,11 @@ router.get('/csv', protect, async (req, res) => {
     });
 
     const records = overtime.map((record) => ({
-      employee: record.user.name,
+      employee: record.employee.name,
       date: new Date(record.date).toLocaleDateString(),
       startTime: record.startTime,
       endTime: record.endTime,
-      description: record.description,
+      description: record.reason,
       status: record.status,
     }));
 

@@ -1,10 +1,8 @@
 import express from 'express';
-import mongoose from 'mongoose';
 import { protect, admin } from '../middleware/auth.js';
-import Overtime from '../models/Overtime.js';
-import User from '../models/User.js';
-import HourBankRecord from '../models/HourBankRecord.js';
-import { CompanySettings } from '../models/companySettings.js';
+import prisma from '../config/database.js';
+import { findUserById } from '../models/user.model.js';
+import { getOrCreateSettings } from '../models/companySettings.model.js';
 import { logAudit, getRequestMetadata } from '../middleware/audit.js';
 import { formatDateForDisplay } from '../utils/dateFormatter.js';
 import logger from '../utils/logger.js';
@@ -52,40 +50,52 @@ const formatHoursForDisplay = (hours) => {
 router.get('/', protect, async (req, res) => {
   try {
     const { startDate, endDate, employeeId } = req.query;
-    logger.debug('Buscando registros de horas extras', { startDate, endDate, employeeId, userId: req.user?._id });
+    logger.debug('Buscando registros de horas extras', { startDate, endDate, employeeId, userId: req.user?.id });
 
     // Cria o filtro base
     let filter = {};
 
+    // Cria o filtro Prisma
+    const prismaFilter = {};
+
     // Adiciona filtro de data apenas se fornecido
     if (startDate && endDate) {
-      filter.date = {
-        $gte: startDate,
-        $lte: endDate
+      prismaFilter.date = {
+        gte: startDate,
+        lte: endDate
       };
     }
 
     // Se for um funcionário, filtra apenas seus registros
     if (req.user.role === 'employee') {
-      filter.employeeId = req.user.id;
+      prismaFilter.employeeId = req.user.id;
     } else if (employeeId) { // Se for admin e um employeeId foi fornecido
-      filter.employeeId = employeeId;
+      prismaFilter.employeeId = employeeId;
     }
 
-    logger.debug('Filtro aplicado', { filter, userId: req.user?._id });
+    logger.debug('Filtro aplicado', { filter: prismaFilter, userId: req.user?.id });
 
     // Busca os registros
-    const records = await Overtime.find(filter)
-      .populate('employeeId', 'name')
-      .sort({ date: -1 });
+    const records = await prisma.overtime.findMany({
+      where: prismaFilter,
+      include: {
+        employee: {
+          select: {
+            id: true,
+            name: true
+          }
+        }
+      },
+      orderBy: { date: 'desc' }
+    });
 
-    logger.debug('Registros encontrados', { count: records.length, userId: req.user?._id });
+    logger.debug('Registros encontrados', { count: records.length, userId: req.user?.id });
 
     // Formata os registros para o frontend
     const formattedRecords = records.map(record => ({
-      id: record._id,
-      employeeId: record.employeeId ? record.employeeId._id : null,
-      employeeName: record.employeeId ? record.employeeId.name : 'Funcionário não encontrado',
+      id: record.id,
+      employeeId: record.employee ? record.employee.id : null,
+      employeeName: record.employee ? record.employee.name : 'Funcionário não encontrado',
       date: record.date, // O campo já é uma string no formato YYYY-MM-DD
       startTime: record.startTime,
       endTime: record.endTime,
@@ -97,7 +107,7 @@ router.get('/', protect, async (req, res) => {
     logger.debug('Registros formatados para resposta', { count: formattedRecords.length });
     res.json(formattedRecords);
   } catch (error) {
-    logger.logError(error, { context: 'Buscar registros de horas extras', userId: req.user?._id });
+    logger.logError(error, { context: 'Buscar registros de horas extras', userId: req.user?.id });
     res.status(500).json({ message: 'Erro ao buscar registros', error: error.message });
   }
 });
@@ -105,11 +115,13 @@ router.get('/', protect, async (req, res) => {
 // Get my overtime records
 router.get('/my', protect, async (req, res) => {
   try {
-    const overtime = await Overtime.find({ employeeId: req.user._id })
-      .sort({ date: -1 });
+    const overtime = await prisma.overtime.findMany({
+      where: { employeeId: req.user.id },
+      orderBy: { date: 'desc' }
+    });
     res.json(overtime);
   } catch (error) {
-    logger.logError(error, { context: 'Buscar minhas horas extras', userId: req.user?._id });
+    logger.logError(error, { context: 'Buscar minhas horas extras', userId: req.user?.id });
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 });
@@ -120,11 +132,11 @@ router.post('/', protect, async (req, res) => {
     const { date, startTime, endTime, reason } = req.body;
     
     // Se for admin, usa o employeeId do body, senão usa o id do usuário logado
-    const employeeId = req.user.role === 'admin' ? req.body.employeeId : req.user._id;
-    logger.debug('Dados de criação de hora extra recebidos', { employeeId, userId: req.user?._id });
+    const employeeId = req.user.role === 'admin' ? req.body.employeeId : req.user.id;
+    logger.debug('Dados de criação de hora extra recebidos', { employeeId, userId: req.user?.id });
 
     // Busca o funcionário para pegar o nome e limite de horas extras
-    const employee = await User.findById(employeeId);
+    const employee = await findUserById(employeeId);
     if (!employee) {
       return res.status(404).json({ message: 'Funcionário não encontrado' });
     }
@@ -144,18 +156,19 @@ router.post('/', protect, async (req, res) => {
     const endDate = `${currentYear}-${String(currentMonth).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
     
     // 3. Busca os registros de horas extras do mês
-    const filter = {
+    const prismaFilter = {
       employeeId,
-      date: { $gte: startDate, $lte: endDate },
-      status: { $in: ['approved', 'pending'] }
+      date: { gte: startDate, lte: endDate },
+      status: { in: ['approved', 'pending'] }
     };
     
-    const overtimeRecords = await Overtime.find(filter);
+    const overtimeRecords = await prisma.overtime.findMany({
+      where: prismaFilter
+    });
     const currentMonthHours = overtimeRecords.reduce((sum, record) => sum + record.hours, 0);
     
     // 4. Busca o limite padrão da empresa
-    const CompanySettings = mongoose.model('CompanySettings');
-    const settings = await CompanySettings.findOne();
+    const settings = await getOrCreateSettings();
     const defaultLimit = settings?.defaultOvertimeLimit || 40;
     
     // 5. Determina o limite aplicável (individual ou padrão)
@@ -188,15 +201,17 @@ router.post('/', protect, async (req, res) => {
     }
     
     // Cria o registro de hora extra
-    const overtime = await Overtime.create({
-      employeeId,
-      date,
-      startTime,
-      endTime,
-      hours,
-      reason,
-      status: 'pending',
-      createdBy: req.user._id
+    const overtime = await prisma.overtime.create({
+      data: {
+        employeeId,
+        date,
+        startTime,
+        endTime,
+        hours,
+        reason,
+        status: 'pending',
+        createdBy: req.user.id
+      }
     });
 
     // Registrar log de auditoria
@@ -204,8 +219,8 @@ router.post('/', protect, async (req, res) => {
     await logAudit({
       action: 'overtime_created',
       entityType: 'overtime',
-      entityId: overtime._id,
-      userId: req.user._id,
+      entityId: overtime.id,
+      userId: req.user.id,
       targetUserId: employeeId,
       description: `Hora extra criada: ${hours}h em ${formatDateForDisplay(date)} - ${reason}`,
       metadata: {
@@ -217,35 +232,48 @@ router.post('/', protect, async (req, res) => {
       ...requestMeta
     });
 
-    // Popula os dados do funcionário e formata a resposta
-    const populatedOvertime = await overtime.populate('employeeId', 'name email');
+    // Busca os dados do funcionário e formata a resposta
+    const overtimeWithEmployee = await prisma.overtime.findUnique({
+      where: { id: overtime.id },
+      include: {
+        employee: {
+          select: {
+            id: true,
+            name: true,
+            email: true
+          }
+        }
+      }
+    });
     
     // Formata a resposta
     const formattedOvertime = {
-      id: populatedOvertime._id,
-      employeeId: populatedOvertime.employeeId ? populatedOvertime.employeeId._id : null,
-      employeeName: populatedOvertime.employeeId ? populatedOvertime.employeeId.name : 'Funcionário não encontrado',
-      date: populatedOvertime.date,
-      startTime: populatedOvertime.startTime,
-      endTime: populatedOvertime.endTime,
-      hours: populatedOvertime.hours,
-      reason: populatedOvertime.reason,
-      status: populatedOvertime.status
+      id: overtimeWithEmployee.id,
+      employeeId: overtimeWithEmployee.employee ? overtimeWithEmployee.employee.id : null,
+      employeeName: overtimeWithEmployee.employee ? overtimeWithEmployee.employee.name : 'Funcionário não encontrado',
+      date: overtimeWithEmployee.date,
+      startTime: overtimeWithEmployee.startTime,
+      endTime: overtimeWithEmployee.endTime,
+      hours: overtimeWithEmployee.hours,
+      reason: overtimeWithEmployee.reason,
+      status: overtimeWithEmployee.status
     };
 
-    logger.info('Registro de hora extra criado', { overtimeId: formattedOvertime.id, employeeId, hours, userId: req.user?._id });
+    logger.info('Registro de hora extra criado', { overtimeId: formattedOvertime.id, employeeId, hours, userId: req.user?.id });
 
     // Se a hora extra foi criada como aprovada, cria crédito automaticamente
     if (overtime.status === 'approved') {
       try {
         // Verificar limites
-        const settings = await CompanySettings.findOne();
+        const settings = await getOrCreateSettings();
         const accumulationLimit = settings?.defaultAccumulationLimit || 0;
 
         // Calcular saldo atual
-        const approvedRecords = await HourBankRecord.find({
-          employeeId: overtime.employeeId,
-          status: 'approved'
+        const approvedRecords = await prisma.hourBankRecord.findMany({
+          where: {
+            employeeId: overtime.employeeId,
+            status: 'approved'
+          }
         });
 
         let currentBalance = 0;
@@ -263,18 +291,18 @@ router.post('/', protect, async (req, res) => {
           logger.warn('Limite de acúmulo excedido', { employeeId: overtime.employeeId, currentBalance, accumulationLimit });
         } else {
           // Criar crédito no banco de horas automaticamente
-          const hourBankCredit = new HourBankRecord({
-            employeeId: overtime.employeeId,
-            date: overtime.date,
-            type: 'credit',
-            hours: overtime.hours,
-            reason: `${overtime.reason} (via hora extra)`,
-            overtimeRecordId: overtime._id,
-            status: 'approved',
-            createdBy: req.user._id
+          await prisma.hourBankRecord.create({
+            data: {
+              employeeId: overtime.employeeId,
+              date: overtime.date,
+              type: 'credit',
+              hours: overtime.hours,
+              reason: `${overtime.reason} (via hora extra)`,
+              overtimeRecordId: overtime.id,
+              status: 'approved',
+              createdBy: req.user.id
+            }
           });
-
-          await hourBankCredit.save();
           logger.info('Crédito no banco de horas criado automaticamente', { overtimeId: overtime._id, employeeId: overtime.employeeId });
         }
       } catch (error) {
@@ -284,7 +312,7 @@ router.post('/', protect, async (req, res) => {
 
     res.status(201).json(formattedOvertime);
   } catch (error) {
-    logger.logError(error, { context: 'Criar registro de hora extra', employeeId, userId: req.user?._id });
+    logger.logError(error, { context: 'Criar registro de hora extra', employeeId, userId: req.user?.id });
     res.status(500).json({ message: 'Erro ao criar registro', error: error.message });
   }
 });
@@ -292,7 +320,9 @@ router.post('/', protect, async (req, res) => {
 // Update overtime status (admin only)
 router.patch('/:id', protect, admin, async (req, res) => {
   try {
-    const overtime = await Overtime.findById(req.params.id);
+    const overtime = await prisma.overtime.findUnique({
+      where: { id: req.params.id }
+    });
     if (!overtime) {
       return res.status(404).json({ message: 'Registro de hora extra não encontrado' });
     }
@@ -304,23 +334,31 @@ router.patch('/:id', protect, admin, async (req, res) => {
     const updateData = { status: newStatus };
     
     if (newStatus === 'approved' && oldStatus !== 'approved') {
-      updateData.approvedBy = req.user._id;
+      updateData.approvedBy = req.user.id;
       updateData.approvedAt = new Date();
       updateData.rejectedBy = null;
       updateData.rejectedAt = null;
     } else if (newStatus === 'rejected' && oldStatus !== 'rejected') {
-      updateData.rejectedBy = req.user._id;
+      updateData.rejectedBy = req.user.id;
       updateData.rejectedAt = new Date();
       updateData.approvedBy = null;
       updateData.approvedAt = null;
     }
 
     // Atualiza o status e campos de auditoria
-    const updatedOvertime = await Overtime.findByIdAndUpdate(
-      req.params.id,
-      updateData,
-      { new: true }
-    ).populate('employeeId', 'name email');
+    const updatedOvertime = await prisma.overtime.update({
+      where: { id: req.params.id },
+      data: updateData,
+      include: {
+        employee: {
+          select: {
+            id: true,
+            name: true,
+            email: true
+          }
+        }
+      }
+    });
 
     // Registrar log de auditoria para aprovação/rejeição
     if ((newStatus === 'approved' && oldStatus !== 'approved') || (newStatus === 'rejected' && oldStatus !== 'rejected')) {
@@ -329,8 +367,8 @@ router.patch('/:id', protect, admin, async (req, res) => {
       await logAudit({
         action: actionName,
         entityType: 'overtime',
-        entityId: overtime._id,
-        userId: req.user._id,
+        entityId: overtime.id,
+        userId: req.user.id,
         targetUserId: overtime.employeeId,
         description: `Hora extra ${newStatus === 'approved' ? 'aprovada' : 'rejeitada'}: ${overtime.hours}h em ${formatDateForDisplay(overtime.date)}`,
         metadata: {
@@ -347,19 +385,23 @@ router.patch('/:id', protect, admin, async (req, res) => {
     if (newStatus === 'approved' && oldStatus !== 'approved') {
       try {
         // Verificar se já existe crédito vinculado a esta hora extra
-        const existingCredit = await HourBankRecord.findOne({
-          overtimeRecordId: overtime._id
+        const existingCredit = await prisma.hourBankRecord.findFirst({
+          where: {
+            overtimeRecordId: overtime.id
+          }
         });
 
         if (!existingCredit) {
           // Buscar limites para validação
-          const settings = await CompanySettings.findOne();
+          const settings = await getOrCreateSettings();
           const accumulationLimit = settings?.defaultAccumulationLimit || 0;
 
           // Calcular saldo atual
-          const approvedRecords = await HourBankRecord.find({
-            employeeId: overtime.employeeId,
-            status: 'approved'
+          const approvedRecords = await prisma.hourBankRecord.findMany({
+            where: {
+              employeeId: overtime.employeeId,
+              status: 'approved'
+            }
           });
 
           let currentBalance = 0;
@@ -378,41 +420,41 @@ router.patch('/:id', protect, admin, async (req, res) => {
             // Não cria o crédito se exceder o limite, mas continua a aprovação da hora extra
           } else {
             // Criar crédito no banco de horas automaticamente
-            const hourBankCredit = new HourBankRecord({
-              employeeId: overtime.employeeId,
-              date: overtime.date,
-              type: 'credit',
-              hours: overtime.hours,
-              reason: `${overtime.reason} (via hora extra aprovada)`,
-              overtimeRecordId: overtime._id,
-              status: 'approved', // Aprovado automaticamente quando a hora extra é aprovada
-              createdBy: req.user._id,
-              approvedBy: req.user._id, // Admin que aprovou a hora extra também aprova o crédito
-              approvedAt: new Date()
+            const hourBankCredit = await prisma.hourBankRecord.create({
+              data: {
+                employeeId: overtime.employeeId,
+                date: overtime.date,
+                type: 'credit',
+                hours: overtime.hours,
+                reason: `${overtime.reason} (via hora extra aprovada)`,
+                overtimeRecordId: overtime.id,
+                status: 'approved', // Aprovado automaticamente quando a hora extra é aprovada
+                createdBy: req.user.id,
+                approvedBy: req.user.id, // Admin que aprovou a hora extra também aprova o crédito
+                approvedAt: new Date()
+              }
             });
-
-            await hourBankCredit.save();
             
             // Registrar log de auditoria para o crédito criado automaticamente
             const requestMeta = getRequestMetadata(req);
             await logAudit({
               action: 'hourbank_credit_created',
               entityType: 'hourbank',
-              entityId: hourBankCredit._id,
-              userId: req.user._id,
+              entityId: hourBankCredit.id,
+              userId: req.user.id,
               targetUserId: overtime.employeeId,
               description: `Crédito no banco de horas criado automaticamente via hora extra aprovada: ${overtime.hours}h em ${formatDateForDisplay(overtime.date)}`,
               metadata: {
                 hours: overtime.hours,
                 date: overtime.date,
                 type: 'credit',
-                overtimeRecordId: overtime._id,
+                overtimeRecordId: overtime.id,
                 autoCreated: true
               },
               ...requestMeta
             });
             
-            logger.info('Crédito no banco de horas criado automaticamente', { overtimeId: overtime._id, employeeId: overtime.employeeId });
+            logger.info('Crédito no banco de horas criado automaticamente', { overtimeId: overtime.id, employeeId: overtime.employeeId });
           }
         }
       } catch (error) {
@@ -423,9 +465,9 @@ router.patch('/:id', protect, admin, async (req, res) => {
     
     // Formata a resposta no mesmo formato que o GET
     const formattedOvertime = {
-      id: updatedOvertime._id,
-      employeeId: updatedOvertime.employeeId ? updatedOvertime.employeeId._id : null,
-      employeeName: updatedOvertime.employeeId ? updatedOvertime.employeeId.name : 'Funcionário não encontrado',
+      id: updatedOvertime.id,
+      employeeId: updatedOvertime.employee ? updatedOvertime.employee.id : null,
+      employeeName: updatedOvertime.employee ? updatedOvertime.employee.name : 'Funcionário não encontrado',
       date: updatedOvertime.date,
       startTime: updatedOvertime.startTime,
       endTime: updatedOvertime.endTime,
@@ -436,7 +478,7 @@ router.patch('/:id', protect, admin, async (req, res) => {
 
     res.json(formattedOvertime);
   } catch (error) {
-    logger.logError(error, { context: 'Atualizar status de hora extra', overtimeId: req.params.id, userId: req.user?._id });
+    logger.logError(error, { context: 'Atualizar status de hora extra', overtimeId: req.params.id, userId: req.user?.id });
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 });
@@ -455,21 +497,31 @@ router.get('/current-month', protect, async (req, res) => {
     const endDate = `${currentYear}-${String(currentMonth).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
     
     // Define o filtro base para o mês atual
-    let filter = {
-      date: { $gte: startDate, $lte: endDate },
-      status: { $in: ['approved', 'pending'] } // Considera horas aprovadas e pendentes
+    const prismaFilter = {
+      date: { gte: startDate, lte: endDate },
+      status: { in: ['approved', 'pending'] } // Considera horas aprovadas e pendentes
     };
     
     // Se for funcionário comum, filtra apenas seus próprios registros
     if (req.user.role === 'employee') {
-      filter.employeeId = req.user._id;
+      prismaFilter.employeeId = req.user.id;
     } else if (req.query.employeeId) { // Se for admin e especificou um funcionário
-      filter.employeeId = req.query.employeeId;
+      prismaFilter.employeeId = req.query.employeeId;
     }
     
     // Busca os registros de horas extras
-    const overtimeRecords = await Overtime.find(filter)
-      .populate('employeeId', 'name overtimeLimit');
+    const overtimeRecords = await prisma.overtime.findMany({
+      where: prismaFilter,
+      include: {
+        employee: {
+          select: {
+            id: true,
+            name: true,
+            overtimeLimit: true
+          }
+        }
+      }
+    });
     
     // Se for funcionário comum ou admin que especificou um funcionário
     if (req.user.role === 'employee' || req.query.employeeId) {
@@ -477,12 +529,11 @@ router.get('/current-month', protect, async (req, res) => {
       const totalHours = overtimeRecords.reduce((sum, record) => sum + record.hours, 0);
       
       // Busca o funcionário para obter o limite de horas extras
-      const employeeId = req.user.role === 'employee' ? req.user._id : req.query.employeeId;
-      const employee = await User.findById(employeeId).select('overtimeLimit overtimeExceptions');
+      const employeeId = req.user.role === 'employee' ? req.user.id : req.query.employeeId;
+      const employee = await findUserById(employeeId);
       
       // Busca o limite padrão da empresa
-      const CompanySettings = mongoose.model('CompanySettings');
-      const settings = await CompanySettings.findOne();
+      const settings = await getOrCreateSettings();
       const defaultLimit = settings?.defaultOvertimeLimit || 40;
       
       // Determina o limite aplicável (individual ou padrão)
@@ -520,15 +571,15 @@ router.get('/current-month', protect, async (req, res) => {
       const employeeHours = {};
       
       for (const record of overtimeRecords) {
-        const empId = record.employeeId?._id.toString();
+        const empId = record.employee?.id;
         if (!empId) continue;
         
         if (!employeeHours[empId]) {
           employeeHours[empId] = {
             employeeId: empId,
-            employeeName: record.employeeId?.name || 'Funcionário não encontrado',
+            employeeName: record.employee?.name || 'Funcionário não encontrado',
             totalHours: 0,
-            overtimeLimit: record.employeeId?.overtimeLimit || null
+            overtimeLimit: record.employee?.overtimeLimit || null
           };
         }
         
@@ -539,14 +590,13 @@ router.get('/current-month', protect, async (req, res) => {
       const result = Object.values(employeeHours);
       
       // Busca o limite padrão da empresa
-      const CompanySettings = mongoose.model('CompanySettings');
-      const settings = await CompanySettings.findOne();
+      const settings = await getOrCreateSettings();
       const defaultLimit = settings?.defaultOvertimeLimit || 40;
       
       // Calcula a porcentagem do limite para cada funcionário
       for (const emp of result) {
         // Busca o funcionário para verificar exceções
-        const employee = await User.findById(emp.employeeId).select('overtimeExceptions');
+        const employee = await findUserById(emp.employeeId);
         
         // Verifica se há exceções para o mês atual
         let additionalHours = 0;

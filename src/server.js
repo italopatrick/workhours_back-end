@@ -1,6 +1,5 @@
 import express from 'express';
 import cors from 'cors';
-import mongoose from 'mongoose';
 import dotenv from 'dotenv';
 import authRoutes from './routes/auth.routes.js';
 import employeeRoutes from './routes/employee.routes.js';
@@ -11,6 +10,7 @@ import hourBankRoutes from './routes/hourBank.routes.js';
 import auditRoutes from './routes/audit.routes.js';
 import logger from './utils/logger.js';
 import { requestLogger } from './middleware/requestLogger.js';
+import { connectDB, disconnectDB } from './config/database.js';
 
 dotenv.config();
 
@@ -88,20 +88,10 @@ app.use(express.json());
 app.use(requestLogger);
 
 // Database connection
-const connectDB = async () => {
-  try {
-    const conn = await mongoose.connect(process.env.MONGODB_URI, {
-      useNewUrlParser: true,
-      useUnifiedTopology: true,
-    });
-    logger.info('MongoDB Connected', { host: conn.connection.host });
-  } catch (error) {
-    logger.logError(error, { context: 'MongoDB Connection' });
-    process.exit(1);
-  }
-};
-
-connectDB();
+connectDB().catch((error) => {
+  logger.logError(error, { context: 'PostgreSQL Connection' });
+  process.exit(1);
+});
 
 // Root route - Welcome message
 app.get('/', (req, res) => {
@@ -141,7 +131,7 @@ app.listen(PORT, HOST, () => {
     host: HOST,
     port: PORT,
     environment: process.env.NODE_ENV || 'development',
-    mongodb: process.env.MONGODB_URI ? 'Connected' : 'Not configured'
+    database: process.env.DATABASE_URL ? 'Connected' : 'Not configured'
   });
 });
 
@@ -153,4 +143,17 @@ process.on('unhandledRejection', (error) => {
 process.on('uncaughtException', (error) => {
   logger.logError(error, { context: 'Uncaught Exception' });
   process.exit(1);
+});
+
+// Graceful shutdown
+process.on('SIGINT', async () => {
+  logger.info('SIGINT received, shutting down gracefully');
+  await disconnectDB();
+  process.exit(0);
+});
+
+process.on('SIGTERM', async () => {
+  logger.info('SIGTERM received, shutting down gracefully');
+  await disconnectDB();
+  process.exit(0);
 });

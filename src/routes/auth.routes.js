@@ -1,7 +1,15 @@
 import express from 'express';
 import jwt from 'jsonwebtoken';
 import fetch from 'node-fetch';
-import User from '../models/User.js';
+import { 
+  createUser, 
+  findUserByEmail, 
+  findUserByExternalId, 
+  findUserById,
+  updateUser,
+  adminExists 
+} from '../models/user.model.js';
+import { checkUserPassword } from '../models/user.model.js';
 import { protect } from '../middleware/auth.js';
 import { getDepartmentName } from '../config/departments.js';
 import { getUserRole } from '../config/userRoles.js';
@@ -16,13 +24,13 @@ const router = express.Router();
 router.post('/setup', async (req, res) => {
   try {
     logger.info('Setup request received', { email: req.body?.email });
-    const adminExists = await User.findOne({ role: 'admin' });
-    if (adminExists) {
+    const exists = await adminExists();
+    if (exists) {
       return res.status(400).json({ message: 'Admin user already exists' });
     }
 
     const { name, email, password, department } = req.body;
-    const user = await User.create({
+    const user = await createUser({
       name,
       email,
       password,
@@ -30,15 +38,15 @@ router.post('/setup', async (req, res) => {
       department: department || 'Administração'  // Valor padrão se não for fornecido
     });
 
-    const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, {
+    const token = jwt.sign({ id: user.id }, process.env.JWT_SECRET, {
       expiresIn: '30d',
     });
 
-    logger.info('Admin user created successfully', { userId: user._id, email: user.email });
+    logger.info('Admin user created successfully', { userId: user.id, email: user.email });
     res.status(201).json({
       token,
       user: {
-        id: user._id,
+        id: user.id,
         name: user.name,
         email: user.email,
         role: user.role,
@@ -191,7 +199,7 @@ router.post('/external-login', async (req, res) => {
       }
       
       // Procurar ou criar usuário local com base no ID externo
-      let user = await User.findOne({ externalId });
+      let user = await findUserByExternalId(externalId);
       
       // Extrair informações do usuário externo
       const userName = externalUserData.name || externalUserData.displayName || externalUserData.userName || 'Usuário Externo';
@@ -227,7 +235,7 @@ router.post('/external-login', async (req, res) => {
       
       if (!user) {
         // Criar novo usuário se não existir
-        user = new User({
+        user = await createUser({
           name: userName,
           email: userEmail,
           department: userDepartment,
@@ -236,29 +244,29 @@ router.post('/external-login', async (req, res) => {
           role: userRole // Definir papel com base no ID externo
         });
         
-        await user.save();
-        logger.info('Novo usuário criado com ID externo', { externalId, userRole, userId: user._id, login });
+        logger.info('Novo usuário criado com ID externo', { externalId, userRole, userId: user.id, login });
       } else {
         // Atualizar dados do usuário existente
-        user.name = userName;
-        user.email = userEmail;
-        user.department = userDepartment;
-        user.externalAuth = true;
-        user.role = userRole; // Atualizar papel com base no ID externo
+        user = await updateUser(user.id, {
+          name: userName,
+          email: userEmail,
+          department: userDepartment,
+          externalAuth: true,
+          role: userRole // Atualizar papel com base no ID externo
+        });
         
-        await user.save();
-        logger.info('Usuário existente atualizado com ID externo', { externalId, userRole, userId: user._id, login });
+        logger.info('Usuário existente atualizado com ID externo', { externalId, userRole, userId: user.id, login });
       }
       
       // Gerar token JWT para o usuário
-      const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, {
+      const token = jwt.sign({ id: user.id }, process.env.JWT_SECRET, {
         expiresIn: '30d',
       });
       
       res.json({
         token,
         user: {
-          id: user._id,
+          id: user.id,
           name: user.name,
           email: user.email,
           role: user.role,
@@ -323,17 +331,18 @@ router.post('/link-external-account', async (req, res) => {
       }
       
       // Verificar se já existe um usuário com este email
-      let user = await User.findOne({ email });
+      let user = await findUserByEmail(email);
       
       if (user) {
         // Se o usuário já existir, vincular o ID externo
-        user.externalId = externalId;
-        user.externalAuth = true;
-        await user.save();
-        logger.info('Existing user linked to external account', { userId: user._id, userName: user.name, email });
+        user = await updateUser(user.id, {
+          externalId,
+          externalAuth: true
+        });
+        logger.info('Existing user linked to external account', { userId: user.id, userName: user.name, email });
       } else {
         // Se o usuário não existir, criar um novo usuário
-        user = await User.create({
+        user = await createUser({
           name: externalUserData.name || externalUserData.nome || 'Usuário',
           email,
           department: externalUserData.department || externalUserData.departamento || 'N/A',
@@ -344,18 +353,18 @@ router.post('/link-external-account', async (req, res) => {
           password: Math.random().toString(36).slice(-10) // Senha aleatória que nunca será usada
         });
         
-        logger.info('New external user created with provided email', { userId: user._id, userName: user.name, email });
+        logger.info('New external user created with provided email', { userId: user.id, userName: user.name, email });
       }
       
       // Gerar token JWT para o usuário
-      const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, {
+      const token = jwt.sign({ id: user.id }, process.env.JWT_SECRET, {
         expiresIn: '30d',
       });
       
       res.json({
         token,
         user: {
-          id: user._id,
+          id: user.id,
           name: user.name,
           email: user.email,
           role: user.role,
@@ -376,10 +385,10 @@ router.post('/link-external-account', async (req, res) => {
 // Get current user
 router.get('/me', protect, async (req, res) => {
   try {
-    logger.debug('Get current user request', { userId: req.user._id, userName: req.user.name });
-    const user = await User.findById(req.user._id).select('-password');
+    logger.debug('Get current user request', { userId: req.user.id, userName: req.user.name });
+    const user = await findUserById(req.user.id, false);
     res.json({
-      id: user._id,
+      id: user.id,
       name: user.name,
       email: user.email,
       role: user.role,
@@ -388,7 +397,7 @@ router.get('/me', protect, async (req, res) => {
       externalId: user.externalId
     });
   } catch (error) {
-    logger.logError(error, { context: 'Get current user', userId: req.user?._id });
+    logger.logError(error, { context: 'Get current user', userId: req.user?.id });
     res.status(500).json({ message: 'Erro no servidor', error: error.message });
   }
 });
@@ -399,7 +408,7 @@ router.get('/validate-token', protect, async (req, res) => {
     // Se chegou aqui, o token é válido (middleware protect já validou)
     res.status(200).json({ valid: true });
   } catch (error) {
-    logger.logError(error, { context: 'Validate token', userId: req.user?._id });
+    logger.logError(error, { context: 'Validate token', userId: req.user?.id });
     res.status(401).json({ valid: false });
   }
 });
@@ -407,30 +416,29 @@ router.get('/validate-token', protect, async (req, res) => {
 // Change password
 router.patch('/change-password', protect, async (req, res) => {
   try {
-    logger.debug('Change password request', { userId: req.user._id });
+    logger.debug('Change password request', { userId: req.user.id });
     const { oldPassword, newPassword } = req.body;
     
     // Get user with password field explicitly included
-    const user = await User.findById(req.user._id).select('+password');
+    const user = await findUserById(req.user.id, true);
     if (!user) {
       return res.status(404).json({ message: 'Usuário não encontrado' });
     }
     
-    logger.debug('User found for password change', { userId: user._id, hasPassword: !!user.password });
+    logger.debug('User found for password change', { userId: user.id, hasPassword: !!user.password });
     
     // Check if current password matches
-    const isMatch = await user.matchPassword(oldPassword);
+    const isMatch = await checkUserPassword(user.id, oldPassword);
     if (!isMatch) {
       return res.status(400).json({ message: 'Senha atual incorreta' });
     }
     
     // Update password
-    user.password = newPassword;
-    await user.save();
+    await updateUser(user.id, { password: newPassword });
     
     res.json({ message: 'Senha alterada com sucesso' });
   } catch (error) {
-    logger.logError(error, { context: 'Change password', userId: req.user?._id });
+    logger.logError(error, { context: 'Change password', userId: req.user?.id });
     res.status(500).json({ message: 'Erro ao alterar senha', error: error.message });
   }
 });
