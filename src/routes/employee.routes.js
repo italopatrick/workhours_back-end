@@ -32,7 +32,10 @@ router.get('/', protect, async (req, res) => {
       department: emp.department,
       role: emp.role,
       overtimeLimit: emp.overtimeLimit,
-      overtimeExceptions: emp.overtimeExceptions || []
+      overtimeExceptions: emp.overtimeExceptions || [],
+      workSchedule: emp.workSchedule,
+      lunchBreakHours: emp.lunchBreakHours,
+      lateTolerance: emp.lateTolerance
     }));
       
     res.json(formattedEmployees);
@@ -45,7 +48,7 @@ router.get('/', protect, async (req, res) => {
 // Create new employee (admin only)
 router.post('/', protect, admin, async (req, res) => {
   try {
-    const { name, email, password, department, role, overtimeLimit } = req.body;
+    const { name, email, password, department, role, overtimeLimit, workSchedule, lunchBreakHours, lateTolerance } = req.body;
 
     const userExists = await findUserByEmail(email);
     if (userExists) {
@@ -63,6 +66,9 @@ router.post('/', protect, admin, async (req, res) => {
       department,
       role: role || 'employee',
       overtimeLimit: overtimeLimit || null,
+      workSchedule: workSchedule || null,
+      lunchBreakHours: lunchBreakHours ? Number(lunchBreakHours) : null,
+      lateTolerance: lateTolerance ? Number(lateTolerance) : 10,
     });
 
     // Registrar log de auditoria
@@ -79,7 +85,10 @@ router.post('/', protect, admin, async (req, res) => {
         email,
         department,
         role: role || 'employee',
-        overtimeLimit: overtimeLimit || null
+        overtimeLimit: overtimeLimit || null,
+        workSchedule,
+        lunchBreakHours,
+        lateTolerance
       },
       ...requestMeta
     });
@@ -91,7 +100,10 @@ router.post('/', protect, admin, async (req, res) => {
       department: user.department,
       role: user.role,
       overtimeLimit: user.overtimeLimit,
-      overtimeExceptions: user.overtimeExceptions || []
+      overtimeExceptions: user.overtimeExceptions || [],
+      workSchedule: user.workSchedule,
+      lunchBreakHours: user.lunchBreakHours,
+      lateTolerance: user.lateTolerance
     });
   } catch (error) {
     logger.logError(error, { context: 'Criar funcionário', userId: req.user?._id });
@@ -362,10 +374,65 @@ router.patch('/:id/role', protect, admin, async (req, res) => {
       department: updatedUser.department,
       role: updatedUser.role,
       overtimeLimit: updatedUser.overtimeLimit,
-      overtimeExceptions: updatedUser.overtimeExceptions || []
+      overtimeExceptions: updatedUser.overtimeExceptions || [],
+      workSchedule: updatedUser.workSchedule,
+      lunchBreakHours: updatedUser.lunchBreakHours,
+      lateTolerance: updatedUser.lateTolerance
     });
   } catch (error) {
     logger.logError(error, { context: 'Atualizar role do funcionário', employeeId: req.params.id, userId: req.user?._id });
+    res.status(500).json({ message: 'Erro no servidor', error: error.message });
+  }
+});
+
+// Atualizar jornada de trabalho (admin only)
+router.patch('/:id/work-schedule', protect, admin, async (req, res) => {
+  try {
+    const { workSchedule, lunchBreakHours, lateTolerance } = req.body;
+    
+    const user = await findUserById(req.params.id);
+    if (!user) {
+      return res.status(404).json({ message: 'Funcionário não encontrado' });
+    }
+
+    const updateData = {};
+    if (workSchedule !== undefined) updateData.workSchedule = workSchedule;
+    if (lunchBreakHours !== undefined) updateData.lunchBreakHours = lunchBreakHours ? Number(lunchBreakHours) : null;
+    if (lateTolerance !== undefined) updateData.lateTolerance = lateTolerance ? Number(lateTolerance) : 10;
+
+    const updatedUser = await updateUser(user.id, updateData);
+
+    // Registrar log de auditoria
+    const requestMeta = getRequestMetadata(req);
+    await logAudit({
+      action: 'employee_created', // Usando ação genérica, pode criar uma específica depois
+      entityType: 'employee',
+      entityId: updatedUser.id,
+      userId: req.user.id,
+      targetUserId: updatedUser.id,
+      description: `Jornada de trabalho atualizada para ${updatedUser.name}`,
+      metadata: {
+        workSchedule,
+        lunchBreakHours,
+        lateTolerance
+      },
+      ...requestMeta
+    });
+
+    res.json({
+      id: updatedUser.id,
+      name: updatedUser.name,
+      email: updatedUser.email,
+      department: updatedUser.department,
+      role: updatedUser.role,
+      overtimeLimit: updatedUser.overtimeLimit,
+      overtimeExceptions: updatedUser.overtimeExceptions || [],
+      workSchedule: updatedUser.workSchedule,
+      lunchBreakHours: updatedUser.lunchBreakHours,
+      lateTolerance: updatedUser.lateTolerance
+    });
+  } catch (error) {
+    logger.logError(error, { context: 'Atualizar jornada de trabalho', employeeId: req.params.id, userId: req.user?._id });
     res.status(500).json({ message: 'Erro no servidor', error: error.message });
   }
 });

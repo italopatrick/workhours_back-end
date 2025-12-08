@@ -1,11 +1,16 @@
 # Relatório de Auditoria de Segurança - Backend
 
 **Data:** 2025-01-05  
-**Versão:** 1.0.0
+**Última Atualização:** 2025-01-05  
+**Versão:** 1.1.0
 
 ## Resumo Executivo
 
 Este relatório identifica vulnerabilidades de segurança no backend da aplicação Workhours. As vulnerabilidades foram categorizadas por severidade (Crítica, Alta, Média, Baixa) e incluem recomendações de correção.
+
+### Status Atual:
+- ✅ **Vulnerabilidades de Dependências:** 0 vulnerabilidades encontradas (todas corrigidas)
+- ⚠️ **Vulnerabilidades de Código:** 12 vulnerabilidades identificadas (pendentes de correção)
 
 ---
 
@@ -59,22 +64,20 @@ Implementar rate limiting em:
 
 ---
 
-### 3. **Vulnerabilidade no JWT (jws)**
+### 3. **Vulnerabilidade no JWT (jws)** ✅ **CORRIGIDA**
 **Severidade:** Crítica  
 **Dependência:** `jws` (via `jsonwebtoken`)  
 **CVE:** GHSA-869p-cjfg-cm3x  
-**CVSS:** 7.5 (Alta)
+**CVSS:** 7.5 (Alta)  
+**Status:** ✅ Corrigida em 2025-01-05
 
 **Problema:**
 A biblioteca `jws` (usada pelo `jsonwebtoken`) tem vulnerabilidade de verificação incorreta de assinatura HMAC.
 
-**Recomendação:**
-```bash
-npm update jsonwebtoken
-npm audit fix
-```
-
-Verificar se a versão atualizada resolve a dependência vulnerável.
+**Correção Aplicada:**
+- Atualizado `jws` de `3.2.2` para `3.2.3` via `npm audit fix`
+- Atualizado `jwa` de `1.4.1` para `1.4.2` (dependência)
+- Verificado: `npm audit` retorna 0 vulnerabilidades
 
 ---
 
@@ -125,20 +128,20 @@ Implementar validação em todas as rotas que recebem dados do usuário.
 
 ---
 
-### 6. **Vulnerabilidade no jsPDF**
+### 6. **Vulnerabilidade no jsPDF** ✅ **CORRIGIDA**
 **Severidade:** Alta  
 **Dependência:** `jspdf@3.0.1`  
 **CVE:** GHSA-8mvj-3j78-4qmw  
-**CVSS:** 7.5 (Alta)
+**CVSS:** 7.5 (Alta)  
+**Status:** ✅ Corrigida em 2025-01-05
 
 **Problema:**
 jsPDF tem vulnerabilidade de DoS (Denial of Service).
 
-**Recomendação:**
-```bash
-npm update jspdf
-npm audit fix
-```
+**Correção Aplicada:**
+- Atualizado `jspdf` de `3.0.1` para `3.0.4` via `npm audit fix`
+- Atualizado `@babel/runtime` de `7.27.0` para `7.28.4` (dependência)
+- Verificado: `npm audit` retorna 0 vulnerabilidades
 
 ---
 
@@ -198,16 +201,23 @@ Embora haja limite de 5MB no Multer, não há validação adicional ou timeout.
 
 ---
 
-### 10. **Vulnerabilidade no Nodemailer**
+### 10. **Vulnerabilidade no Nodemailer** ✅ **CORRIGIDA**
 **Severidade:** Média  
 **Dependência:** `nodemailer@6.10.0`  
-**Risco:** Potencial vulnerabilidade conhecida
+**Risco:** Potencial vulnerabilidade conhecida  
+**Status:** ✅ Corrigida em 2025-01-05
 
-**Recomendação:**
-```bash
-npm update nodemailer
-npm audit fix
-```
+**Problema:**
+Nodemailer tinha vulnerabilidades de:
+- Email para domínio não intencionado devido a conflito de interpretação
+- DoS causado por chamadas recursivas no addressparser
+
+**Correção Aplicada:**
+- Atualizado `nodemailer` de `6.10.0` para `7.0.11` (breaking change)
+- Verificado compatibilidade com código existente (createTransport e sendMail)
+- Verificado: `npm audit` retorna 0 vulnerabilidades
+
+**Nota:** Atualização para v7.x é uma breaking change, mas o uso atual no código é compatível.
 
 ---
 
@@ -248,16 +258,19 @@ if (!emailRegex.test(email)) {
 
 ## 🟢 Vulnerabilidades Baixas
 
-### 13. **Vulnerabilidade no brace-expansion**
+### 13. **Vulnerabilidade no brace-expansion** ✅ **CORRIGIDA**
 **Severidade:** Baixa  
 **Dependência:** `brace-expansion` (indireta)  
 **CVE:** GHSA-v6h2-p8h4-qcjw  
-**CVSS:** 3.1 (Baixa)
+**CVSS:** 3.1 (Baixa)  
+**Status:** ✅ Corrigida em 2025-01-05
 
-**Recomendação:**
-```bash
-npm audit fix
-```
+**Problema:**
+Vulnerabilidade de Regular Expression Denial of Service (ReDoS).
+
+**Correção Aplicada:**
+- Atualizado `brace-expansion` de `1.1.11` para `1.1.12` via `npm audit fix`
+- Verificado: `npm audit` retorna 0 vulnerabilidades
 
 ---
 
@@ -300,14 +313,36 @@ const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}
 7. ✅ **Logs estruturados**
 8. ✅ **Auditoria de ações implementada**
 9. ✅ **Validação de tipos de arquivo no upload**
+10. ✅ **Todas as vulnerabilidades de dependências corrigidas (0 vulnerabilidades)**
+
+## ✅ Vulnerabilidades de Dependências Corrigidas
+
+**Data da Correção:** 2025-01-05  
+**Status:** ✅ Todas as vulnerabilidades de dependências foram corrigidas
+
+### Dependências Atualizadas:
+- ✅ `jws`: `3.2.2` → `3.2.3` (via npm audit fix)
+- ✅ `jwa`: `1.4.1` → `1.4.2` (dependência do jws)
+- ✅ `jspdf`: `3.0.1` → `3.0.4` (via npm audit fix)
+- ✅ `nodemailer`: `6.10.0` → `7.0.11` (breaking change, mas compatível)
+- ✅ `nodemon`: `2.0.22` → `3.1.11` (devDependency)
+- ✅ `brace-expansion`: `1.1.11` → `1.1.12` (via npm audit fix)
+- ✅ `semver`: Atualizado via nodemon (vulnerabilidade alta corrigida)
+- ✅ `simple-update-notifier`: Atualizado via nodemon
+
+### Verificação:
+```bash
+npm audit
+# Resultado: found 0 vulnerabilities
+```
 
 ---
 
 ## 📋 Plano de Ação Prioritário
 
 ### Prioridade 1 (Imediato)
-1. Remover exposição de `error.message` em produção
-2. Atualizar dependências vulneráveis (`npm audit fix`)
+1. ✅ ~~Atualizar dependências vulneráveis (`npm audit fix`)~~ **CONCLUÍDO**
+2. Remover exposição de `error.message` em produção
 3. Implementar rate limiting nas rotas de autenticação
 4. Adicionar Helmet.js para headers de segurança
 
@@ -327,14 +362,19 @@ const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}
 
 ## 🔧 Comandos para Correção Rápida
 
+### ✅ Dependências (Já Corrigidas)
 ```bash
-# Atualizar dependências vulneráveis
-npm audit fix
+# Status atual: 0 vulnerabilidades
+npm audit
+# Resultado: found 0 vulnerabilities
+```
 
+### ⚠️ Próximas Correções Necessárias
+```bash
 # Instalar pacotes de segurança
 npm install express-rate-limit helmet express-validator
 
-# Verificar vulnerabilidades
+# Verificar vulnerabilidades (já está limpo)
 npm audit
 ```
 

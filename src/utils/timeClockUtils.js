@@ -1,0 +1,156 @@
+/**
+ * Utilities for time clock calculations
+ */
+
+/**
+ * Calculate worked hours between two times (excluding lunch break)
+ * @param {Date} entryTime - Entry time
+ * @param {Date} exitTime - Exit time
+ * @param {number} lunchBreakHours - Hours of lunch break
+ * @returns {number} Total worked hours
+ */
+export function calculateWorkedHours(entryTime, exitTime, lunchBreakHours = 0) {
+  if (!entryTime || !exitTime) {
+    return 0;
+  }
+
+  const diffMs = exitTime.getTime() - entryTime.getTime();
+  const diffHours = diffMs / (1000 * 60 * 60);
+  
+  // Subtract lunch break hours
+  return Math.max(0, diffHours - lunchBreakHours);
+}
+
+/**
+ * Calculate late minutes
+ * @param {Date} entryTime - Actual entry time
+ * @param {string} scheduledStartTime - Scheduled start time (format: "HH:mm")
+ * @param {number} tolerance - Tolerance in minutes (default: 10)
+ * @returns {number} Minutes of delay (0 if on time or within tolerance)
+ */
+export function calculateLateMinutes(entryTime, scheduledStartTime, tolerance = 10) {
+  if (!entryTime || !scheduledStartTime) {
+    return 0;
+  }
+
+  const [scheduledHour, scheduledMinute] = scheduledStartTime.split(':').map(Number);
+  const scheduledDate = new Date(entryTime);
+  scheduledDate.setHours(scheduledHour, scheduledMinute, 0, 0);
+
+  const diffMs = entryTime.getTime() - scheduledDate.getTime();
+  const diffMinutes = diffMs / (1000 * 60);
+
+  // If within tolerance or early, return 0
+  if (diffMinutes <= tolerance) {
+    return 0;
+  }
+
+  return Math.round(diffMinutes);
+}
+
+/**
+ * Calculate overtime hours
+ * @param {Date} exitTime - Actual exit time
+ * @param {string} scheduledEndTime - Scheduled end time (format: "HH:mm")
+ * @returns {number} Overtime hours (0 if not overtime)
+ */
+export function calculateOvertimeHours(exitTime, scheduledEndTime) {
+  if (!exitTime || !scheduledEndTime) {
+    return 0;
+  }
+
+  const [scheduledHour, scheduledMinute] = scheduledEndTime.split(':').map(Number);
+  const scheduledDate = new Date(exitTime);
+  scheduledDate.setHours(scheduledHour, scheduledMinute, 0, 0);
+
+  const diffMs = exitTime.getTime() - scheduledDate.getTime();
+  const diffHours = diffMs / (1000 * 60 * 60);
+
+  // Only return positive overtime (if left early, return 0)
+  return Math.max(0, diffHours);
+}
+
+/**
+ * Get work schedule for a specific day
+ * @param {Object} user - User object with workSchedule
+ * @param {Date} date - Date to get schedule for
+ * @returns {Object|null} Schedule object { startTime, endTime } or null
+ */
+export function getWorkScheduleForDay(user, date) {
+  if (!user?.workSchedule) {
+    return null;
+  }
+
+  const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+  const dayName = dayNames[date.getDay()];
+
+  const schedule = user.workSchedule[dayName];
+  
+  if (!schedule || schedule === null) {
+    return null;
+  }
+
+  return schedule;
+}
+
+/**
+ * Get scheduled hours for a specific day
+ * @param {Object} user - User object with workSchedule and lunchBreakHours
+ * @param {Date} date - Date to calculate for
+ * @returns {number} Scheduled hours for the day
+ */
+export function getScheduledHoursForDay(user, date) {
+  const schedule = getWorkScheduleForDay(user, date);
+  
+  if (!schedule) {
+    return 0;
+  }
+
+  const [startHour, startMinute] = schedule.startTime.split(':').map(Number);
+  const [endHour, endMinute] = schedule.endTime.split(':').map(Number);
+
+  const startMinutes = startHour * 60 + startMinute;
+  const endMinutes = endHour * 60 + endMinute;
+
+  const totalMinutes = endMinutes - startMinutes;
+  const totalHours = totalMinutes / 60;
+
+  // Subtract lunch break hours
+  const lunchBreakHours = user.lunchBreakHours || 0;
+  
+  return totalHours - lunchBreakHours;
+}
+
+/**
+ * Format date to YYYY-MM-DD string
+ * @param {Date} date - Date to format
+ * @returns {string} Formatted date string
+ */
+export function formatDateString(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+/**
+ * Parse time string to Date (using current date as base)
+ * @param {string} timeString - Time string in format "HH:mm"
+ * @param {Date} baseDate - Base date to use
+ * @returns {Date|null} Parsed date or null if invalid
+ */
+export function parseTimeString(timeString, baseDate) {
+  if (!timeString || !baseDate) {
+    return null;
+  }
+
+  const [hour, minute] = timeString.split(':').map(Number);
+  if (isNaN(hour) || isNaN(minute)) {
+    return null;
+  }
+
+  const date = new Date(baseDate);
+  date.setHours(hour, minute, 0, 0);
+  return date;
+}
+

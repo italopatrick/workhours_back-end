@@ -30,7 +30,10 @@ export async function createUser(userData) {
     externalId,
     externalAuth = false,
     overtimeLimit,
-    overtimeExceptions
+    overtimeExceptions,
+    workSchedule,
+    lunchBreakHours,
+    lateTolerance
   } = userData;
 
   // Hash password if provided and not external auth
@@ -52,7 +55,10 @@ export async function createUser(userData) {
       externalId: externalIdString,
       externalAuth,
       overtimeLimit,
-      overtimeExceptions: overtimeExceptions || null
+      overtimeExceptions: overtimeExceptions || null,
+      workSchedule: workSchedule || null,
+      lunchBreakHours: lunchBreakHours || null,
+      lateTolerance: lateTolerance || 10
     }
   });
 
@@ -78,6 +84,9 @@ export async function findUserById(id, includePassword = false) {
       externalAuth: true,
       overtimeLimit: true,
       overtimeExceptions: true,
+      workSchedule: true,
+      lunchBreakHours: true,
+      lateTolerance: true,
       createdAt: true,
       updatedAt: true
     }
@@ -105,6 +114,9 @@ export async function findUserByEmail(email, includePassword = false) {
       externalAuth: true,
       overtimeLimit: true,
       overtimeExceptions: true,
+      workSchedule: true,
+      lunchBreakHours: true,
+      lateTolerance: true,
       createdAt: true,
       updatedAt: true
     }
@@ -150,6 +162,9 @@ export async function findUsers(query = {}, options = {}) {
       externalAuth: true,
       overtimeLimit: true,
       overtimeExceptions: true,
+      workSchedule: true,
+      lunchBreakHours: true,
+      lateTolerance: true,
       createdAt: true,
       updatedAt: true
     },
