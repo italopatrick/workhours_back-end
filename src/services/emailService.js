@@ -1,6 +1,5 @@
 import nodemailer from 'nodemailer';
 import logger from '../utils/logger.js';
-import { formatDateTimeString } from '../utils/dateFormatter.js';
 
 // Configuração do transporte de email
 const transporter = nodemailer.createTransport({
