@@ -11,7 +11,8 @@ import {
   calculateOvertimeHours,
   getWorkScheduleForDay,
   getScheduledHoursForDay,
-  formatDateString
+  formatDateString,
+  validateEntryTime
 } from '../utils/timeClockUtils.js';
 import logger from '../utils/logger.js';
 
@@ -251,6 +252,25 @@ router.post('/clock-in', protect, async (req, res) => {
         availableDays: workSchedules.map(s => s.dayOfWeek)
       });
       return res.status(400).json({ error: 'Não há jornada configurada para este dia da semana' });
+    }
+
+    // Validar horário mínimo de entrada
+    const lateTolerance = employee.lateTolerance || 10;
+    const validation = validateEntryTime(now, schedule.startTime, lateTolerance);
+    
+    if (!validation.valid) {
+      logger.warn('Tentativa de registrar entrada antes do horário permitido', {
+        employeeId: req.user.id,
+        date: today,
+        entryTime: now.toISOString(),
+        scheduledStartTime: schedule.startTime,
+        tolerance: lateTolerance,
+        minAllowedTime: validation.minAllowedTime
+      });
+      
+      return res.status(400).json({ 
+        error: validation.message 
+      });
     }
 
     // Criar ou atualizar registro

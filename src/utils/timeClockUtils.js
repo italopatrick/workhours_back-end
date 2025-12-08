@@ -183,3 +183,46 @@ export function parseTimeString(timeString, baseDate) {
   return date;
 }
 
+/**
+ * Valida se o horário de entrada está dentro do permitido
+ * @param {Date} entryTime - Horário de entrada
+ * @param {string} scheduledStartTime - Horário de início agendado (format: "HH:mm")
+ * @param {number} tolerance - Tolerância em minutos (default: 10)
+ * @returns {Object} { valid: boolean, message: string, minAllowedTime: string }
+ */
+export function validateEntryTime(entryTime, scheduledStartTime, tolerance = 10) {
+  if (!entryTime || !scheduledStartTime) {
+    return {
+      valid: true, // Se não tem horário agendado, permitir
+      message: '',
+      minAllowedTime: null
+    };
+  }
+
+  const [scheduledHour, scheduledMinute] = scheduledStartTime.split(':').map(Number);
+  const scheduledDate = new Date(entryTime);
+  scheduledDate.setHours(scheduledHour, scheduledMinute, 0, 0);
+
+  // Calcular horário mínimo permitido (horário agendado - tolerância)
+  const minAllowedDate = new Date(scheduledDate);
+  minAllowedDate.setMinutes(minAllowedDate.getMinutes() - tolerance);
+
+  // Formatar horário mínimo para exibição
+  const minAllowedTime = `${String(minAllowedDate.getHours()).padStart(2, '0')}:${String(minAllowedDate.getMinutes()).padStart(2, '0')}`;
+
+  // Verificar se entrada é antes do horário mínimo
+  if (entryTime < minAllowedDate) {
+    return {
+      valid: false,
+      message: `Não é possível registrar entrada antes de ${minAllowedTime}. Horário de início: ${scheduledStartTime}, Tolerância: ${tolerance} minutos.`,
+      minAllowedTime
+    };
+  }
+
+  return {
+    valid: true,
+    message: '',
+    minAllowedTime
+  };
+}
+
