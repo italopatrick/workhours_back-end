@@ -250,6 +250,11 @@ router.post('/clock-out-lunch', protect, async (req, res) => {
   try {
     const today = formatDateString(new Date());
 
+    logger.info('Tentativa de registrar saída para almoço', {
+      userId: req.user.id,
+      date: today
+    });
+
     const record = await prisma.timeClock.findUnique({
       where: {
         employeeId_date: {
@@ -259,15 +264,45 @@ router.post('/clock-out-lunch', protect, async (req, res) => {
       }
     });
 
+    logger.info('Registro de ponto encontrado', {
+      userId: req.user.id,
+      date: today,
+      recordExists: !!record,
+      hasEntryTime: !!record?.entryTime,
+      hasLunchExitTime: !!record?.lunchExitTime,
+      hasLunchReturnTime: !!record?.lunchReturnTime,
+      record: record ? {
+        id: record.id,
+        entryTime: record.entryTime,
+        lunchExitTime: record.lunchExitTime,
+        lunchReturnTime: record.lunchReturnTime
+      } : null
+    });
+
     if (!record) {
+      logger.warn('Registro de ponto não encontrado para saída de almoço', {
+        userId: req.user.id,
+        date: today
+      });
       return res.status(400).json({ error: 'Registro de ponto não encontrado. Registre a entrada primeiro.' });
     }
 
     if (!record.entryTime) {
+      logger.warn('Tentativa de registrar saída para almoço sem entrada', {
+        userId: req.user.id,
+        date: today,
+        recordId: record.id
+      });
       return res.status(400).json({ error: 'Entrada não registrada. Registre a entrada primeiro.' });
     }
 
     if (record.lunchExitTime) {
+      logger.warn('Tentativa de registrar saída para almoço duplicada', {
+        userId: req.user.id,
+        date: today,
+        recordId: record.id,
+        existingLunchExitTime: record.lunchExitTime
+      });
       return res.status(400).json({ error: 'Saída para almoço já registrada' });
     }
 
