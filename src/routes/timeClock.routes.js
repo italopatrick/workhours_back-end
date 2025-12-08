@@ -70,6 +70,20 @@ router.post('/clock-in', protect, async (req, res) => {
 
     // Validar jornada configurada
     if (!employee.workSchedule) {
+      logger.warn('Tentativa de bater ponto sem jornada configurada', { userId: req.user.id });
+      return res.status(400).json({ error: 'Jornada de trabalho não configurada. Entre em contato com o administrador.' });
+    }
+
+    // Verificar se pelo menos um dia tem jornada configurada
+    const hasAtLeastOneDay = Object.values(employee.workSchedule).some(day => 
+      day !== null && day !== undefined && day.startTime && day.endTime
+    );
+    
+    if (!hasAtLeastOneDay) {
+      logger.warn('Tentativa de bater ponto com jornada vazia', { 
+        userId: req.user.id,
+        workSchedule: employee.workSchedule 
+      });
       return res.status(400).json({ error: 'Jornada de trabalho não configurada. Entre em contato com o administrador.' });
     }
 

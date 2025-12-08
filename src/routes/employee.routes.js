@@ -390,17 +390,101 @@ router.patch('/:id/work-schedule', protect, admin, async (req, res) => {
   try {
     const { workSchedule, lunchBreakHours, lateTolerance } = req.body;
     
+    logger.info('Atualizando jornada de trabalho', { 
+      employeeId: req.params.id, 
+      workSchedule: workSchedule ? 'presente' : 'ausente',
+      workScheduleKeys: workSchedule ? Object.keys(workSchedule) : [],
+      lunchBreakHours,
+      lateTolerance
+    });
+    
     const user = await findUserById(req.params.id);
     if (!user) {
       return res.status(404).json({ message: 'Funcionário não encontrado' });
     }
 
     const updateData = {};
-    if (workSchedule !== undefined) updateData.workSchedule = workSchedule;
+
+    // Validar se workSchedule tem pelo menos um dia configurado
+    if (workSchedule !== undefined) {
+      // Se workSchedule for string, tentar fazer parse
+      let parsedWorkSchedule = workSchedule;
+      if (typeof workSchedule === 'string') {
+        try {
+          parsedWorkSchedule = JSON.parse(workSchedule);
+        } catch (e) {
+          logger.warn('Erro ao fazer parse do workSchedule', { 
+            employeeId: req.params.id,
+            error: e.message,
+            workSchedule 
+          });
+          return res.status(400).json({ 
+            message: 'Formato de jornada de trabalho inválido.' 
+          });
+        }
+      }
+
+      // Verificar se é um objeto válido
+      if (typeof parsedWorkSchedule !== 'object' || parsedWorkSchedule === null) {
+        logger.warn('workSchedule não é um objeto válido', { 
+          employeeId: req.params.id,
+          workScheduleType: typeof parsedWorkSchedule,
+          workSchedule 
+        });
+        return res.status(400).json({ 
+          message: 'Formato de jornada de trabalho inválido.' 
+        });
+      }
+
+      const hasAtLeastOneDay = Object.values(parsedWorkSchedule).some(day => 
+        day !== null && day !== undefined && typeof day === 'object' && day.startTime && day.endTime
+      );
+      
+      if (!hasAtLeastOneDay) {
+        logger.warn('Tentativa de salvar jornada sem dias configurados', { 
+          employeeId: req.params.id,
+          workSchedule: parsedWorkSchedule 
+        });
+        return res.status(400).json({ 
+          message: 'É necessário configurar pelo menos um dia da semana com horário de trabalho.' 
+        });
+      }
+      
+      logger.info('Jornada validada com sucesso', { 
+        employeeId: req.params.id,
+        daysConfigured: Object.entries(parsedWorkSchedule)
+          .filter(([_, day]) => day !== null && day !== undefined && typeof day === 'object' && day.startTime && day.endTime)
+          .map(([day, _]) => day)
+      });
+
+      // Usar o workSchedule parseado
+      updateData.workSchedule = parsedWorkSchedule;
+    }
+
+    // Adicionar outros campos
     if (lunchBreakHours !== undefined) updateData.lunchBreakHours = lunchBreakHours ? Number(lunchBreakHours) : null;
     if (lateTolerance !== undefined) updateData.lateTolerance = lateTolerance ? Number(lateTolerance) : 10;
 
+    logger.info('Dados para atualização', { 
+      employeeId: req.params.id,
+      updateData: {
+        hasWorkSchedule: !!updateData.workSchedule,
+        workScheduleType: typeof updateData.workSchedule,
+        workScheduleString: updateData.workSchedule ? JSON.stringify(updateData.workSchedule) : 'null',
+        lunchBreakHours: updateData.lunchBreakHours,
+        lateTolerance: updateData.lateTolerance
+      }
+    });
+
     const updatedUser = await updateUser(user.id, updateData);
+    
+    logger.info('Jornada atualizada com sucesso', { 
+      employeeId: updatedUser.id,
+      hasWorkSchedule: !!updatedUser.workSchedule,
+      workScheduleType: typeof updatedUser.workSchedule,
+      workScheduleString: updatedUser.workSchedule ? JSON.stringify(updatedUser.workSchedule) : 'null',
+      workSchedule: updatedUser.workSchedule
+    });
 
     // Registrar log de auditoria
     const requestMeta = getRequestMetadata(req);
