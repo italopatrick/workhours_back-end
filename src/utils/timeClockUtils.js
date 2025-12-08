@@ -33,6 +33,10 @@ export function calculateWorkedHours(entryTime, exitTime, lunchBreakHours = 0) {
  */
 export function calculateLateMinutes(entryTime, scheduledStartTime, tolerance = 10) {
   if (!entryTime || !scheduledStartTime) {
+    logger.warn('calculateLateMinutes: Parâmetros inválidos', {
+      entryTime: entryTime?.toISOString(),
+      scheduledStartTime
+    });
     return 0;
   }
 
@@ -42,6 +46,16 @@ export function calculateLateMinutes(entryTime, scheduledStartTime, tolerance = 
 
   const diffMs = entryTime.getTime() - scheduledDate.getTime();
   const diffMinutes = diffMs / (1000 * 60);
+
+  logger.debug('calculateLateMinutes: Cálculo detalhado', {
+    entryTime: entryTime.toISOString(),
+    scheduledStartTime,
+    scheduledDate: scheduledDate.toISOString(),
+    diffMs,
+    diffMinutes,
+    tolerance,
+    willReturnZero: diffMinutes <= tolerance
+  });
 
   // If within tolerance or early, return 0
   if (diffMinutes <= tolerance) {

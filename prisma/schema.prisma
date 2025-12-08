@@ -231,7 +231,8 @@ model TimeClock {
   negativeHours     Float?    // Horas negativas (se saiu antes)
   hourBankCreditId  String?   // ID do crédito criado (se houver hora extra)
   hourBankDebitId   String?   // ID do débito criado (se houver abatimento)
-  justification     String?   // Justificativa para atraso ou horas não cumpridas
+  justification     String?   // Justificativa para atraso ou horas não cumpridas (texto livre ou motivo da TimeClockJustification)
+  justificationId   String?   // ID da justificativa pré-definida (opcional)
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 
@@ -239,6 +240,7 @@ model TimeClock {
   employee          User      @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   hourBankCredit    HourBankRecord? @relation("TimeClockCredit", fields: [hourBankCreditId], references: [id])
   hourBankDebit     HourBankRecord? @relation("TimeClockDebit", fields: [hourBankDebitId], references: [id])
+  justificationReason TimeClockJustification? @relation(fields: [justificationId], references: [id], onDelete: SetNull)
 
   @@unique([employeeId, date])
   @@index([employeeId])
@@ -262,5 +264,18 @@ model CompanySettings {
   updatedAt               DateTime @updatedAt
 
   @@map("company_settings")
+}
+
+model TimeClockJustification {
+  id          String   @id @default(uuid())
+  reason      String   @unique // Ex: "Trânsito", "Problemas pessoais", etc.
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  timeClockRecords TimeClock[]
+
+  @@map("time_clock_justifications")
 }
 
