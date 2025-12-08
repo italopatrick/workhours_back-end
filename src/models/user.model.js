@@ -92,6 +92,19 @@ export async function findUserById(id, includePassword = false) {
     }
   });
 
+  // Log para depuração - apenas se for buscar workSchedule
+  if (user && !includePassword) {
+    const logger = (await import('../utils/logger.js')).default;
+    logger.debug('findUserById retornou', {
+      userId: user.id,
+      hasWorkSchedule: !!user.workSchedule,
+      workScheduleType: typeof user.workSchedule,
+      workScheduleValue: user.workSchedule,
+      lunchBreakHours: user.lunchBreakHours,
+      lateTolerance: user.lateTolerance
+    });
+  }
+
   return user;
 }
 

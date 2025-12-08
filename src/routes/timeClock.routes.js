@@ -63,26 +63,65 @@ async function calculateHourBankBalance(employeeId) {
 // POST /api/timeclock/clock-in - Registrar entrada
 router.post('/clock-in', protect, async (req, res) => {
   try {
+    logger.info('Tentativa de bater ponto - buscando funcionário', { 
+      userId: req.user.id,
+      userName: req.user.name 
+    });
+
     const employee = await findUserById(req.user.id);
     if (!employee) {
+      logger.error('Funcionário não encontrado ao tentar bater ponto', { userId: req.user.id });
       return res.status(404).json({ error: 'Funcionário não encontrado' });
     }
 
+    logger.info('Dados do funcionário buscado', {
+      userId: employee.id,
+      hasWorkSchedule: !!employee.workSchedule,
+      workScheduleType: typeof employee.workSchedule,
+      workScheduleValue: employee.workSchedule,
+      workScheduleString: employee.workSchedule ? JSON.stringify(employee.workSchedule) : 'null',
+      lunchBreakHours: employee.lunchBreakHours,
+      lateTolerance: employee.lateTolerance
+    });
+
     // Validar jornada configurada
     if (!employee.workSchedule) {
-      logger.warn('Tentativa de bater ponto sem jornada configurada', { userId: req.user.id });
+      logger.warn('Tentativa de bater ponto sem jornada configurada', { 
+        userId: req.user.id,
+        employeeId: employee.id,
+        workSchedule: employee.workSchedule
+      });
       return res.status(400).json({ error: 'Jornada de trabalho não configurada. Entre em contato com o administrador.' });
     }
 
     // Verificar se pelo menos um dia tem jornada configurada
-    const hasAtLeastOneDay = Object.values(employee.workSchedule).some(day => 
-      day !== null && day !== undefined && day.startTime && day.endTime
+    const workScheduleKeys = Object.keys(employee.workSchedule || {});
+    const workScheduleValues = Object.values(employee.workSchedule || {});
+    
+    logger.info('Análise do workSchedule', {
+      userId: employee.id,
+      workScheduleKeys,
+      workScheduleValuesCount: workScheduleValues.length,
+      workScheduleValues
+    });
+
+    const hasAtLeastOneDay = workScheduleValues.some(day => 
+      day !== null && day !== undefined && typeof day === 'object' && day.startTime && day.endTime
     );
+    
+    logger.info('Validação de dias configurados', {
+      userId: employee.id,
+      hasAtLeastOneDay,
+      workSchedule: employee.workSchedule
+    });
     
     if (!hasAtLeastOneDay) {
       logger.warn('Tentativa de bater ponto com jornada vazia', { 
         userId: req.user.id,
-        workSchedule: employee.workSchedule 
+        employeeId: employee.id,
+        workSchedule: employee.workSchedule,
+        workScheduleKeys,
+        workScheduleValues
       });
       return res.status(400).json({ error: 'Jornada de trabalho não configurada. Entre em contato com o administrador.' });
     }

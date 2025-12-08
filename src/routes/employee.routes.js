@@ -478,12 +478,25 @@ router.patch('/:id/work-schedule', protect, admin, async (req, res) => {
 
     const updatedUser = await updateUser(user.id, updateData);
     
+    // Verificar novamente do banco para confirmar que foi salvo
+    const verifiedUser = await findUserById(updatedUser.id);
+    
     logger.info('Jornada atualizada com sucesso', { 
       employeeId: updatedUser.id,
       hasWorkSchedule: !!updatedUser.workSchedule,
       workScheduleType: typeof updatedUser.workSchedule,
       workScheduleString: updatedUser.workSchedule ? JSON.stringify(updatedUser.workSchedule) : 'null',
       workSchedule: updatedUser.workSchedule
+    });
+
+    logger.info('Verificação pós-salvamento no banco', {
+      employeeId: verifiedUser?.id,
+      hasWorkSchedule: !!verifiedUser?.workSchedule,
+      workScheduleType: typeof verifiedUser?.workSchedule,
+      workScheduleString: verifiedUser?.workSchedule ? JSON.stringify(verifiedUser.workSchedule) : 'null',
+      workSchedule: verifiedUser?.workSchedule,
+      lunchBreakHours: verifiedUser?.lunchBreakHours,
+      lateTolerance: verifiedUser?.lateTolerance
     });
 
     // Registrar log de auditoria
@@ -503,17 +516,20 @@ router.patch('/:id/work-schedule', protect, admin, async (req, res) => {
       ...requestMeta
     });
 
+    // Retornar os dados verificados do banco para garantir que está atualizado
+    const finalUser = verifiedUser || updatedUser;
+    
     res.json({
-      id: updatedUser.id,
-      name: updatedUser.name,
-      email: updatedUser.email,
-      department: updatedUser.department,
-      role: updatedUser.role,
-      overtimeLimit: updatedUser.overtimeLimit,
-      overtimeExceptions: updatedUser.overtimeExceptions || [],
-      workSchedule: updatedUser.workSchedule,
-      lunchBreakHours: updatedUser.lunchBreakHours,
-      lateTolerance: updatedUser.lateTolerance
+      id: finalUser.id,
+      name: finalUser.name,
+      email: finalUser.email,
+      department: finalUser.department,
+      role: finalUser.role,
+      overtimeLimit: finalUser.overtimeLimit,
+      overtimeExceptions: finalUser.overtimeExceptions || [],
+      workSchedule: finalUser.workSchedule,
+      lunchBreakHours: finalUser.lunchBreakHours,
+      lateTolerance: finalUser.lateTolerance
     });
   } catch (error) {
     logger.logError(error, { context: 'Atualizar jornada de trabalho', employeeId: req.params.id, userId: req.user?._id });
