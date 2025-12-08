@@ -1000,7 +1000,8 @@ router.patch('/records/:id', protect, admin, async (req, res) => {
             name: true,
             email: true,
             lunchBreakHours: true,
-            lateTolerance: true
+            lateTolerance: true,
+            workSchedules: true
           }
         }
       }
@@ -1171,6 +1172,17 @@ router.patch('/records/:id', protect, admin, async (req, res) => {
       updateData.overtimeHours = overtimeHours > 0 ? overtimeHours : null;
       updateData.negativeHours = negativeHours > 0 ? negativeHours : null;
 
+      // Validar justificativa obrigatória para atraso ou horas negativas
+      const lateTolerance = employee.lateTolerance || 10;
+      const hasLateBeyondTolerance = lateMinutes > lateTolerance;
+      const hasNegativeHours = negativeHours > 0;
+      
+      if ((hasLateBeyondTolerance || hasNegativeHours) && !justification) {
+        return res.status(400).json({ 
+          error: 'Justificativa é obrigatória quando há atraso além da tolerância ou horas não cumpridas.' 
+        });
+      }
+
       // Verificar se há mudanças que afetam banco de horas
       const hadOvertime = record.overtimeHours && record.overtimeHours > 0;
       const hasOvertime = overtimeHours > 0;
@@ -1309,7 +1321,8 @@ router.patch('/records/:id', protect, admin, async (req, res) => {
           select: {
             id: true,
             name: true,
-            email: true
+            email: true,
+            lateTolerance: true
           }
         }
       }
