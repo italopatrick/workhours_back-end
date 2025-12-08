@@ -459,14 +459,20 @@ router.patch('/records/:id/status', protect, admin, async (req, res) => {
       }
     }
 
-    // Se está aprovando um débito, verificar saldo disponível
+    // Se está aprovando um débito, permitir saldo negativo
+    // (com a nova implementação, débitos podem resultar em saldo negativo)
+    // Apenas logar o saldo após aprovação, mas não bloquear
     if (status === 'approved' && record.type === 'debit') {
       const balance = await calculateBalance(record.employeeId);
-      if (balance.availableBalance < record.hours) {
-        return res.status(400).json({
-          error: `Saldo insuficiente. Saldo disponível: ${balance.availableBalance}h, Débito: ${record.hours}h`,
-          canProceed: false,
-          availableBalance: balance.availableBalance
+      const balanceAfterDebit = balance.availableBalance - record.hours;
+      
+      if (balanceAfterDebit < 0) {
+        logger.info('Aprovando débito que resultará em saldo negativo', {
+          employeeId: record.employeeId,
+          recordId: record.id,
+          currentBalance: balance.availableBalance,
+          debitHours: record.hours,
+          balanceAfterDebit
         });
       }
     }
