@@ -406,10 +406,19 @@ const handleWorkScheduleUpdate = async (req, res) => {
       return res.status(404).json({ message: 'Funcionário não encontrado' });
     }
 
-    // Verificar se já existe jornada cadastrada
+    // Verificar se já existe jornada cadastrada E válida
+    // Considera apenas jornadas que têm pelo menos um dia configurado com horários válidos
     const hasExistingSchedule = !!user.workSchedule && 
-      Object.values(user.workSchedule || {}).some(day => 
-        day !== null && day !== undefined && typeof day === 'object' && day.startTime && day.endTime
+      typeof user.workSchedule === 'object' &&
+      user.workSchedule !== null &&
+      Object.values(user.workSchedule).some(day => 
+        day !== null && 
+        day !== undefined && 
+        typeof day === 'object' && 
+        day.startTime && 
+        day.endTime &&
+        day.startTime.trim && day.startTime.trim() !== '' &&
+        day.endTime.trim && day.endTime.trim() !== ''
       );
 
     logger.info('Estado da jornada atual', {
@@ -417,29 +426,35 @@ const handleWorkScheduleUpdate = async (req, res) => {
       hasExistingSchedule,
       method: req.method,
       workScheduleExists: !!user.workSchedule,
-      workSchedule: user.workSchedule
+      workScheduleType: typeof user.workSchedule,
+      workScheduleIsNull: user.workSchedule === null,
+      workSchedule: user.workSchedule,
+      workScheduleKeys: user.workSchedule ? Object.keys(user.workSchedule) : [],
+      workScheduleValues: user.workSchedule ? Object.values(user.workSchedule) : []
     });
 
-    // POST: só deve criar se não existir jornada
+    // POST: só deve criar se não existir jornada válida
     if (isPost && hasExistingSchedule) {
       logger.warn('Tentativa de criar jornada que já existe - use PATCH para atualizar', {
         employeeId: user.id,
-        hasExistingSchedule
+        hasExistingSchedule,
+        workSchedule: user.workSchedule
       });
       return res.status(400).json({ 
         message: 'Jornada de trabalho já cadastrada para este funcionário. Use PATCH para atualizar.' 
       });
     }
 
-    // PATCH: só deve atualizar se já existir jornada
+    // PATCH: só deve atualizar se já existir jornada válida
+    // Mas se não existir, vamos permitir criar via PATCH também (mais flexível)
     if (isPatch && !hasExistingSchedule) {
-      logger.warn('Tentativa de atualizar jornada que não existe - use POST para criar', {
+      logger.info('PATCH usado para criar jornada (não existia antes)', {
         employeeId: user.id,
-        hasExistingSchedule
+        hasExistingSchedule,
+        workSchedule: user.workSchedule
       });
-      return res.status(400).json({ 
-        message: 'Jornada de trabalho não cadastrada para este funcionário. Use POST para criar.' 
-      });
+      // Permitir que PATCH também crie se não existir (para compatibilidade)
+      // Mas vamos avisar no log
     }
 
     const updateData = {};
