@@ -658,7 +658,7 @@ router.get('/today', protect, async (req, res) => {
       } : null
     });
 
-    // Se não encontrou registro para hoje, buscar registros recentes para debug
+    // Se não encontrou registro para hoje, verificar se há registro aberto recente
     if (!record) {
       const recentRecords = await prisma.timeClock.findMany({
         where: {
@@ -671,7 +671,10 @@ router.get('/today', protect, async (req, res) => {
         select: {
           id: true,
           date: true,
-          entryTime: true
+          entryTime: true,
+          exitTime: true,
+          lunchExitTime: true,
+          lunchReturnTime: true
         }
       });
 
@@ -680,9 +683,48 @@ router.get('/today', protect, async (req, res) => {
         todayDate: today,
         recentRecords: recentRecords.map(r => ({
           date: r.date,
-          entryTime: r.entryTime
+          entryTime: r.entryTime,
+          exitTime: r.exitTime,
+          hasOpenRecord: !!r.entryTime && !r.exitTime
         }))
       });
+
+      // Verificar se há um registro aberto recente (sem saída final)
+      // Isso pode acontecer se o registro foi criado ontem e não foi finalizado
+      const openRecord = recentRecords.find(r => r.entryTime && !r.exitTime);
+      
+      if (openRecord && openRecord.date !== today) {
+        logger.warn('Registro aberto encontrado de data diferente de hoje', {
+          userId: req.user.id,
+          todayDate: today,
+          openRecordDate: openRecord.date,
+          recordId: openRecord.id
+        });
+        
+        // Retornar o registro aberto mesmo sendo de data diferente
+        // O frontend pode lidar com isso mostrando uma mensagem apropriada
+        const fullOpenRecord = await prisma.timeClock.findUnique({
+          where: { id: openRecord.id },
+          include: {
+            employee: {
+              select: {
+                id: true,
+                name: true,
+                email: true
+              }
+            }
+          }
+        });
+        
+        if (fullOpenRecord) {
+          logger.info('Retornando registro aberto de data anterior', {
+            userId: req.user.id,
+            recordDate: fullOpenRecord.date,
+            todayDate: today
+          });
+          return res.json(fullOpenRecord);
+        }
+      }
     }
 
     res.json(record || null);
