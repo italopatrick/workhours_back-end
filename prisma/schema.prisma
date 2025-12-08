@@ -231,6 +231,7 @@ model TimeClock {
   negativeHours     Float?    // Horas negativas (se saiu antes)
   hourBankCreditId  String?   // ID do crédito criado (se houver hora extra)
   hourBankDebitId   String?   // ID do débito criado (se houver abatimento)
+  justification     String?   // Justificativa para atraso ou horas não cumpridas
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 
