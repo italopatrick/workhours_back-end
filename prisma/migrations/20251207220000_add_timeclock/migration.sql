@@ -1,13 +1,29 @@
 -- AlterEnum
--- Adicionar novos valores ao enum AuditAction
-ALTER TYPE "AuditAction" ADD VALUE IF NOT EXISTS 'timeclock_entry';
-ALTER TYPE "AuditAction" ADD VALUE IF NOT EXISTS 'timeclock_lunch_exit';
-ALTER TYPE "AuditAction" ADD VALUE IF NOT EXISTS 'timeclock_lunch_return';
-ALTER TYPE "AuditAction" ADD VALUE IF NOT EXISTS 'timeclock_exit';
+-- Adicionar novos valores ao enum AuditAction (se não existirem)
+DO $$ 
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_enum WHERE enumlabel = 'timeclock_entry' AND enumtypid = 'AuditAction'::regtype) THEN
+        ALTER TYPE "AuditAction" ADD VALUE 'timeclock_entry';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_enum WHERE enumlabel = 'timeclock_lunch_exit' AND enumtypid = 'AuditAction'::regtype) THEN
+        ALTER TYPE "AuditAction" ADD VALUE 'timeclock_lunch_exit';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_enum WHERE enumlabel = 'timeclock_lunch_return' AND enumtypid = 'AuditAction'::regtype) THEN
+        ALTER TYPE "AuditAction" ADD VALUE 'timeclock_lunch_return';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_enum WHERE enumlabel = 'timeclock_exit' AND enumtypid = 'AuditAction'::regtype) THEN
+        ALTER TYPE "AuditAction" ADD VALUE 'timeclock_exit';
+    END IF;
+END $$;
 
 -- AlterEnum
--- Adicionar novo valor ao enum EntityType
-ALTER TYPE "EntityType" ADD VALUE IF NOT EXISTS 'timeclock';
+-- Adicionar novo valor ao enum EntityType (se não existir)
+DO $$ 
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_enum WHERE enumlabel = 'timeclock' AND enumtypid = 'EntityType'::regtype) THEN
+        ALTER TYPE "EntityType" ADD VALUE 'timeclock';
+    END IF;
+END $$;
 
 -- AlterTable
 -- Adicionar novos campos na tabela users
