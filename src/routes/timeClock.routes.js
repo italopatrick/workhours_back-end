@@ -273,37 +273,6 @@ router.post('/clock-in', protect, async (req, res) => {
       });
     }
 
-    // Calcular atraso na entrada
-    let lateMinutes = 0;
-    if (schedule) {
-      lateMinutes = calculateLateMinutes(
-        now,
-        schedule.startTime,
-        lateTolerance
-      );
-    }
-
-    // Validar se precisa de justificativa (após calcular lateMinutes)
-    if (lateMinutes > lateTolerance && req.user.role !== 'admin') {
-      const { justification } = req.body;
-      
-      if (!justification || justification.trim().length === 0) {
-        logger.warn('Tentativa de registrar entrada atrasada sem justificativa', {
-          employeeId: req.user.id,
-          date: today,
-          lateMinutes,
-          tolerance: lateTolerance
-        });
-        
-        return res.status(400).json({
-          error: 'Justificativa obrigatória para atraso',
-          requiresJustification: true,
-          lateMinutes,
-          tolerance: lateTolerance
-        });
-      }
-    }
-
     // Criar ou atualizar registro
     logger.info('Chamando getOrCreateTimeClockRecord', {
       employeeId: req.user.id,
@@ -318,18 +287,11 @@ router.post('/clock-in', protect, async (req, res) => {
       date: today
     });
     
-    // Preparar dados de atualização incluindo justificativa se fornecida
-    const updateData = {
-      entryTime: now,
-      lateMinutes: lateMinutes > 0 ? lateMinutes : null,
-      ...(req.body.justification && req.body.justification.trim().length > 0 && { 
-        justification: req.body.justification.trim() 
-      })
-    };
-    
     const updatedRecord = await prisma.timeClock.update({
       where: { id: record.id },
-      data: updateData,
+      data: {
+        entryTime: now
+      },
       include: {
         employee: {
           select: {
@@ -666,66 +628,15 @@ router.post('/clock-out', protect, async (req, res) => {
       negativeHours = Math.max(0, Math.round(negativeHours * 100) / 100);
     }
 
-    // Adicionar minutos não trabalhados na saída ao atraso total
-    if (negativeHours > 0) {
-      const minutesNotWorked = Math.round(negativeHours * 60);
-      lateMinutes = lateMinutes + minutesNotWorked;
-      
-      logger.info('Atraso total calculado incluindo horas não trabalhadas', {
-        employeeId: req.user.id,
-        date: today,
-        lateMinutesEntry: lateMinutes - minutesNotWorked,
-        minutesNotWorked,
-        lateMinutesTotal: lateMinutes
-      });
-    }
-
-    // Validar justificativa se necessário (após calcular negativeHours e lateMinutes)
-    const lateTolerance = employee.lateTolerance || 10;
-    const needsJustification = (lateMinutes > lateTolerance || negativeHours > 0) && req.user.role !== 'admin';
-
-    if (needsJustification) {
-      const { justification } = req.body;
-      
-      if (!justification || justification.trim().length === 0) {
-        logger.warn('Tentativa de registrar saída sem justificativa quando necessário', {
-          employeeId: req.user.id,
-          date: today,
-          lateMinutes,
-          negativeHours,
-          tolerance: lateTolerance
-        });
-        
-        return res.status(400).json({
-          error: 'Justificativa obrigatória',
-          requiresJustification: true,
-          reason: negativeHours > 0 ? 'horas_nao_cumpridas' : 'atraso_entrada',
-          lateMinutes,
-          negativeHours,
-          tolerance: lateTolerance
-        });
-      }
-    }
-
     // Preparar dados de atualização
     const updateData = {
       exitTime: now,
       totalWorkedHours,
       scheduledHours,
-      lateMinutes: lateMinutes > 0 ? lateMinutes : null,
+      lateMinutes,
       overtimeHours: overtimeHours > 0 ? overtimeHours : null,
       negativeHours: negativeHours > 0 ? negativeHours : null
     };
-
-    // Adicionar/atualizar justificativa se fornecida
-    if (req.body.justification && req.body.justification.trim().length > 0) {
-      if (record.justification) {
-        // Se já existe justificativa (da entrada), mesclar
-        updateData.justification = `${record.justification}\n\nJustificativa saída: ${req.body.justification.trim()}`;
-      } else {
-        updateData.justification = req.body.justification.trim();
-      }
-    }
 
     // Se houver horas extras, compensar débitos pendentes primeiro
     // Depois criar crédito apenas com o que sobrar
@@ -1070,6 +981,370 @@ router.get('/my-records', protect, async (req, res) => {
   } catch (error) {
     logger.logError(error, { context: 'Listar registros de ponto' });
     res.status(500).json({ error: 'Erro ao listar registros de ponto' });
+  }
+});
+
+// PATCH /api/timeclock/records/:id - Editar registro de ponto (admin only)
+router.patch('/records/:id', protect, admin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { entryTime, lunchExitTime, lunchReturnTime, exitTime, justification } = req.body;
+
+    // Buscar registro existente
+    const record = await prisma.timeClock.findUnique({
+      where: { id },
+      include: {
+        employee: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            lunchBreakHours: true,
+            lateTolerance: true
+          }
+        }
+      }
+    });
+
+    if (!record) {
+      return res.status(404).json({ error: 'Registro de ponto não encontrado' });
+    }
+
+    const employee = record.employee;
+    if (!employee) {
+      return res.status(404).json({ error: 'Funcionário não encontrado' });
+    }
+
+    // Buscar jornada da tabela normalizada
+    const workSchedules = await getWorkScheduleByEmployee(employee.id, true);
+
+    // Preparar dados de atualização
+    const updateData = {};
+    const oldValues = {
+      entryTime: record.entryTime,
+      lunchExitTime: record.lunchExitTime,
+      lunchReturnTime: record.lunchReturnTime,
+      exitTime: record.exitTime,
+      justification: record.justification
+    };
+
+    // Atualizar campos fornecidos
+    if (entryTime !== undefined) {
+      updateData.entryTime = entryTime ? new Date(entryTime) : null;
+    }
+    if (lunchExitTime !== undefined) {
+      updateData.lunchExitTime = lunchExitTime ? new Date(lunchExitTime) : null;
+    }
+    if (lunchReturnTime !== undefined) {
+      updateData.lunchReturnTime = lunchReturnTime ? new Date(lunchReturnTime) : null;
+    }
+    if (exitTime !== undefined) {
+      updateData.exitTime = exitTime ? new Date(exitTime) : null;
+    }
+    if (justification !== undefined) {
+      updateData.justification = justification || null;
+    }
+
+    // Se não há mudanças nos horários, apenas atualizar justificativa se fornecida
+    if (Object.keys(updateData).length === 0 || (Object.keys(updateData).length === 1 && updateData.justification !== undefined)) {
+      if (updateData.justification !== undefined) {
+        const updatedRecord = await prisma.timeClock.update({
+          where: { id },
+          data: updateData,
+          include: {
+            employee: {
+              select: {
+                id: true,
+                name: true,
+                email: true
+              }
+            }
+          }
+        });
+
+        // Log de auditoria
+        const metadata = getRequestMetadata(req);
+        await logAudit({
+          action: 'timeclock_edited',
+          entityType: 'timeclock',
+          entityId: updatedRecord.id,
+          userId: req.user.id,
+          targetUserId: employee.id,
+          description: `Justificativa atualizada para registro de ponto de ${employee.name}`,
+          metadata: {
+            recordId: id,
+            date: record.date,
+            changes: { justification: updateData.justification },
+            oldValues
+          },
+          ...metadata
+        });
+
+        return res.json(updatedRecord);
+      }
+      return res.status(400).json({ error: 'Nenhuma alteração fornecida' });
+    }
+
+    // Validar ordem dos horários se todos foram fornecidos
+    const finalEntryTime = updateData.entryTime !== undefined ? updateData.entryTime : (record.entryTime ? new Date(record.entryTime) : null);
+    const finalLunchExitTime = updateData.lunchExitTime !== undefined ? updateData.lunchExitTime : (record.lunchExitTime ? new Date(record.lunchExitTime) : null);
+    const finalLunchReturnTime = updateData.lunchReturnTime !== undefined ? updateData.lunchReturnTime : (record.lunchReturnTime ? new Date(record.lunchReturnTime) : null);
+    const finalExitTime = updateData.exitTime !== undefined ? updateData.exitTime : (record.exitTime ? new Date(record.exitTime) : null);
+
+    // Validações básicas de ordem
+    if (finalEntryTime && finalLunchExitTime && finalEntryTime >= finalLunchExitTime) {
+      return res.status(400).json({ error: 'Horário de entrada deve ser anterior à saída para almoço' });
+    }
+    if (finalLunchExitTime && finalLunchReturnTime && finalLunchExitTime >= finalLunchReturnTime) {
+      return res.status(400).json({ error: 'Saída para almoço deve ser anterior à volta do almoço' });
+    }
+    if (finalLunchReturnTime && finalExitTime && finalLunchReturnTime >= finalExitTime) {
+      return res.status(400).json({ error: 'Volta do almoço deve ser anterior à saída final' });
+    }
+    if (finalEntryTime && finalExitTime && finalEntryTime >= finalExitTime) {
+      return res.status(400).json({ error: 'Horário de entrada deve ser anterior à saída final' });
+    }
+
+    // Se exitTime foi alterado ou se tem exitTime, recalcular tudo
+    const needsRecalculation = updateData.exitTime !== undefined || record.exitTime;
+
+    if (needsRecalculation && finalEntryTime && finalExitTime) {
+      // Calcular horas trabalhadas
+      const totalWorkedHours = calculateWorkedHours(
+        finalEntryTime,
+        finalExitTime,
+        employee.lunchBreakHours || 0
+      );
+
+      // Calcular atraso
+      const schedule = getWorkScheduleForDay(workSchedules, finalEntryTime);
+      let lateMinutes = 0;
+      if (schedule && finalEntryTime) {
+        lateMinutes = calculateLateMinutes(
+          finalEntryTime,
+          schedule.startTime,
+          employee.lateTolerance || 10
+        );
+      }
+
+      // Calcular horas extras
+      let overtimeHours = 0;
+      if (schedule && finalExitTime) {
+        overtimeHours = calculateOvertimeHours(finalExitTime, schedule.endTime);
+      }
+
+      // Calcular horas esperadas do dia
+      const scheduledHours = getScheduledHoursForDay(
+        { workSchedules, lunchBreakHours: employee.lunchBreakHours },
+        finalEntryTime
+      );
+
+      // Calcular horas negativas
+      let negativeHours = 0;
+      if (schedule && scheduledHours > 0) {
+        let deficit = scheduledHours - totalWorkedHours;
+        
+        if (lateMinutes > 0 && deficit > 0) {
+          const lateTolerance = employee.lateTolerance || 10;
+          const effectiveLateMinutes = Math.max(0, lateMinutes - lateTolerance);
+          const effectiveLateHours = effectiveLateMinutes / 60;
+          negativeHours = Math.max(0, deficit - effectiveLateHours);
+        } else if (deficit > 0) {
+          const expectedExit = new Date(finalEntryTime);
+          const [endHour, endMinute] = schedule.endTime.split(':').map(Number);
+          expectedExit.setHours(endHour, endMinute, 0, 0);
+          
+          if (finalExitTime < expectedExit) {
+            const exitDeficit = (expectedExit.getTime() - finalExitTime.getTime()) / (1000 * 60 * 60);
+            negativeHours = Math.max(deficit, exitDeficit);
+          } else {
+            negativeHours = deficit;
+          }
+        }
+        
+        negativeHours = Math.max(0, Math.round(negativeHours * 100) / 100);
+      }
+
+      updateData.totalWorkedHours = totalWorkedHours;
+      updateData.scheduledHours = scheduledHours;
+      updateData.lateMinutes = lateMinutes;
+      updateData.overtimeHours = overtimeHours > 0 ? overtimeHours : null;
+      updateData.negativeHours = negativeHours > 0 ? negativeHours : null;
+
+      // Verificar se há mudanças que afetam banco de horas
+      const hadOvertime = record.overtimeHours && record.overtimeHours > 0;
+      const hasOvertime = overtimeHours > 0;
+      const hadNegativeHours = record.negativeHours && record.negativeHours > 0;
+      const hasNegativeHours = negativeHours > 0;
+
+      // Se houve mudança em horas extras ou negativas, atualizar banco de horas
+      if (hadOvertime || hasOvertime || hadNegativeHours || hasNegativeHours) {
+        // Remover registros antigos do banco de horas se existirem
+        if (record.hourBankCreditId) {
+          await prisma.hourBankRecord.delete({
+            where: { id: record.hourBankCreditId }
+          }).catch(() => {
+            // Ignorar erro se não existir
+          });
+          updateData.hourBankCreditId = null;
+        }
+        if (record.hourBankDebitId) {
+          await prisma.hourBankRecord.delete({
+            where: { id: record.hourBankDebitId }
+          }).catch(() => {
+            // Ignorar erro se não existir
+          });
+          updateData.hourBankDebitId = null;
+        }
+
+        // Criar novos registros se necessário
+        if (hasOvertime) {
+          const remainingOvertime = await compensateDebitsFromOvertime(
+            employee.id,
+            overtimeHours,
+            record.date
+          );
+          
+          if (remainingOvertime > 0) {
+            const hourBankCredit = await prisma.hourBankRecord.create({
+              data: {
+                employeeId: employee.id,
+                date: record.date,
+                type: 'credit',
+                hours: remainingOvertime,
+                reason: `Hora extra automática do ponto (editado) - ${record.date}`,
+                createdBy: req.user.id,
+                status: 'pending'
+              }
+            });
+            updateData.hourBankCreditId = hourBankCredit.id;
+          }
+        }
+
+        if (hasNegativeHours) {
+          const balance = await calculateHourBankBalance(employee.id);
+          let debitHours = negativeHours;
+          
+          if (balance > 0) {
+            const debitFromBalance = Math.min(negativeHours, balance);
+            const remainingDebit = negativeHours - debitFromBalance;
+            
+            if (debitFromBalance > 0) {
+              const hourBankDebit = await prisma.hourBankRecord.create({
+                data: {
+                  employeeId: employee.id,
+                  date: record.date,
+                  type: 'debit',
+                  hours: debitFromBalance,
+                  reason: `Compensação automática de horas negativas (abatido do saldo, editado) - ${record.date}`,
+                  createdBy: req.user.id,
+                  status: 'pending'
+                }
+              });
+              updateData.hourBankDebitId = hourBankDebit.id;
+            }
+            
+            if (remainingDebit > 0) {
+              const hourBankNegativeDebit = await prisma.hourBankRecord.create({
+                data: {
+                  employeeId: employee.id,
+                  date: record.date,
+                  type: 'debit',
+                  hours: remainingDebit,
+                  reason: `Compensação automática de horas negativas (débito negativo, editado) - ${record.date}`,
+                  createdBy: req.user.id,
+                  status: 'pending'
+                }
+              });
+              
+              if (!updateData.hourBankDebitId) {
+                updateData.hourBankDebitId = hourBankNegativeDebit.id;
+              }
+            }
+          } else {
+            const hourBankDebit = await prisma.hourBankRecord.create({
+              data: {
+                employeeId: employee.id,
+                date: record.date,
+                type: 'debit',
+                hours: debitHours,
+                reason: `Compensação automática de horas negativas (saldo negativo, editado) - ${record.date}`,
+                createdBy: req.user.id,
+                status: 'pending'
+              }
+            });
+            updateData.hourBankDebitId = hourBankDebit.id;
+          }
+        }
+      }
+    } else if (!finalEntryTime || !finalExitTime) {
+      // Se não tem entrada ou saída, limpar cálculos
+      updateData.totalWorkedHours = null;
+      updateData.scheduledHours = null;
+      updateData.lateMinutes = null;
+      updateData.overtimeHours = null;
+      updateData.negativeHours = null;
+      
+      // Remover registros do banco de horas
+      if (record.hourBankCreditId) {
+        await prisma.hourBankRecord.delete({
+          where: { id: record.hourBankCreditId }
+        }).catch(() => {});
+        updateData.hourBankCreditId = null;
+      }
+      if (record.hourBankDebitId) {
+        await prisma.hourBankRecord.delete({
+          where: { id: record.hourBankDebitId }
+        }).catch(() => {});
+        updateData.hourBankDebitId = null;
+      }
+    }
+
+    // Atualizar registro
+    const updatedRecord = await prisma.timeClock.update({
+      where: { id },
+      data: updateData,
+      include: {
+        employee: {
+          select: {
+            id: true,
+            name: true,
+            email: true
+          }
+        }
+      }
+    });
+
+    // Log de auditoria
+    const metadata = getRequestMetadata(req);
+    await logAudit({
+      action: 'timeclock_edited',
+      entityType: 'timeclock',
+      entityId: updatedRecord.id,
+      userId: req.user.id,
+      targetUserId: employee.id,
+      description: `Registro de ponto editado para ${employee.name} - ${record.date}`,
+      metadata: {
+        recordId: id,
+        date: record.date,
+        changes: updateData,
+        oldValues
+      },
+      ...metadata
+    });
+
+    logger.info('Registro de ponto editado', {
+      adminId: req.user.id,
+      employeeId: employee.id,
+      recordId: id,
+      date: record.date,
+      changes: Object.keys(updateData)
+    });
+
+    res.json(updatedRecord);
+  } catch (error) {
+    logger.logError(error, { context: 'Editar registro de ponto' });
+    res.status(500).json({ error: 'Erro ao editar registro de ponto' });
   }
 });
 
