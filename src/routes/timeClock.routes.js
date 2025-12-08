@@ -616,7 +616,15 @@ router.post('/clock-out', protect, async (req, res) => {
 // GET /api/timeclock/today - Status do ponto de hoje
 router.get('/today', protect, async (req, res) => {
   try {
-    const today = formatDateString(new Date());
+    const now = new Date();
+    const today = formatDateString(now);
+
+    logger.info('Buscando registro de ponto de hoje', {
+      userId: req.user.id,
+      date: today,
+      dateObj: now.toISOString(),
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
+    });
 
     const record = await prisma.timeClock.findUnique({
       where: {
@@ -635,6 +643,47 @@ router.get('/today', protect, async (req, res) => {
         }
       }
     });
+
+    logger.info('Registro de ponto de hoje encontrado', {
+      userId: req.user.id,
+      date: today,
+      recordExists: !!record,
+      record: record ? {
+        id: record.id,
+        date: record.date,
+        entryTime: record.entryTime,
+        lunchExitTime: record.lunchExitTime,
+        lunchReturnTime: record.lunchReturnTime,
+        exitTime: record.exitTime
+      } : null
+    });
+
+    // Se não encontrou registro para hoje, buscar registros recentes para debug
+    if (!record) {
+      const recentRecords = await prisma.timeClock.findMany({
+        where: {
+          employeeId: req.user.id
+        },
+        orderBy: {
+          date: 'desc'
+        },
+        take: 5,
+        select: {
+          id: true,
+          date: true,
+          entryTime: true
+        }
+      });
+
+      logger.info('Registros recentes do funcionário (para debug)', {
+        userId: req.user.id,
+        todayDate: today,
+        recentRecords: recentRecords.map(r => ({
+          date: r.date,
+          entryTime: r.entryTime
+        }))
+      });
+    }
 
     res.json(record || null);
   } catch (error) {
