@@ -1187,7 +1187,7 @@ router.patch('/records/:id', protect, admin, async (req, res) => {
       const hadOvertime = record.overtimeHours && record.overtimeHours > 0;
       const hasOvertime = overtimeHours > 0;
       const hadNegativeHours = record.negativeHours && record.negativeHours > 0;
-      const hasNegativeHours = negativeHours > 0;
+      // hasNegativeHours já foi declarado acima na validação de justificativa
 
       // Se houve mudança em horas extras ou negativas, atualizar banco de horas
       if (hadOvertime || hasOvertime || hadNegativeHours || hasNegativeHours) {
