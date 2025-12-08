@@ -93,6 +93,76 @@ async function calculateHourBankBalance(employeeId) {
   return balance;
 }
 
+/**
+ * Buscar débitos pendentes (aprovados e não compensados) do funcionário
+ */
+async function getPendingDebits(employeeId) {
+  return await prisma.hourBankRecord.findMany({
+    where: {
+      employeeId,
+      type: 'debit',
+      status: 'approved'
+    },
+    orderBy: {
+      createdAt: 'asc' // Compensar débitos mais antigos primeiro
+    }
+  });
+}
+
+/**
+ * Compensar débitos pendentes usando horas extras
+ * Retorna as horas extras restantes após compensação
+ */
+async function compensateDebitsFromOvertime(employeeId, overtimeHours, date) {
+  if (overtimeHours <= 0) {
+    return 0;
+  }
+
+  const pendingDebits = await getPendingDebits(employeeId);
+  
+  if (pendingDebits.length === 0) {
+    return overtimeHours; // Sem débitos, retorna todas as horas extras
+  }
+
+  // Calcular débito total pendente
+  const totalDebit = pendingDebits.reduce((sum, debit) => sum + debit.hours, 0);
+  
+  let remainingOvertime = overtimeHours;
+  
+  // Se há débitos pendentes, abater das horas extras
+  if (totalDebit > 0 && remainingOvertime > 0) {
+    const compensationAmount = Math.min(remainingOvertime, totalDebit);
+    
+    // Criar crédito para compensar os débitos
+    if (compensationAmount > 0) {
+      await prisma.hourBankRecord.create({
+        data: {
+          employeeId,
+          date,
+          type: 'credit',
+          hours: compensationAmount,
+          reason: `Compensação automática de débitos pendentes - ${date}`,
+          createdBy: employeeId,
+          status: 'pending'
+        }
+      });
+      
+      logger.info('Débitos compensados automaticamente das horas extras', {
+        employeeId,
+        date,
+        compensationAmount,
+        totalDebit,
+        overtimeHours,
+        remainingOvertime: remainingOvertime - compensationAmount
+      });
+      
+      remainingOvertime -= compensationAmount;
+    }
+  }
+  
+  return Math.max(0, remainingOvertime);
+}
+
 // POST /api/timeclock/clock-in - Registrar entrada
 router.post('/clock-in', protect, async (req, res) => {
   try {
@@ -498,16 +568,44 @@ router.post('/clock-out', protect, async (req, res) => {
     // Calcular horas esperadas do dia
     const scheduledHours = getScheduledHoursForDay({ workSchedules, lunchBreakHours: employee.lunchBreakHours }, now);
 
-    // Calcular horas negativas (se saiu antes do horário esperado)
+    // Calcular horas negativas (considerando déficit de horas trabalhadas vs esperadas)
     let negativeHours = 0;
     if (schedule && scheduledHours > 0) {
-      const expectedExit = new Date(record.entryTime);
-      const [endHour, endMinute] = schedule.endTime.split(':').map(Number);
-      expectedExit.setHours(endHour, endMinute, 0, 0);
+      // Calcular déficit baseado em horas esperadas vs horas trabalhadas
+      let deficit = scheduledHours - totalWorkedHours;
       
-      if (now < expectedExit) {
-        negativeHours = (expectedExit.getTime() - now.getTime()) / (1000 * 60 * 60);
+      // Se há atraso na entrada, aplicar tolerância
+      if (lateMinutes > 0 && deficit > 0) {
+        const lateTolerance = employee.lateTolerance || 10;
+        // Calcular atraso efetivo (considerando tolerância)
+        // Se o atraso é menor ou igual à tolerância, não há déficit
+        const effectiveLateMinutes = Math.max(0, lateMinutes - lateTolerance);
+        const effectiveLateHours = effectiveLateMinutes / 60;
+        
+        // O déficit já considera o tempo que não foi trabalhado devido ao atraso
+        // Se o déficit é maior que o atraso efetivo (após tolerância), há déficit adicional
+        // Caso contrário, o déficit é apenas do atraso e já está coberto pela tolerância
+        negativeHours = Math.max(0, deficit - effectiveLateHours);
+      } else if (deficit > 0) {
+        // Sem atraso na entrada (ou atraso dentro da tolerância), considerar déficit total
+        // Se trabalhou menos que o esperado OU saiu antes do horário
+        const expectedExit = new Date(record.entryTime);
+        const [endHour, endMinute] = schedule.endTime.split(':').map(Number);
+        expectedExit.setHours(endHour, endMinute, 0, 0);
+        
+        // Verificar se saiu antes do horário esperado
+        if (now < expectedExit) {
+          // Calcular baseado no horário de saída (mais preciso)
+          const exitDeficit = (expectedExit.getTime() - now.getTime()) / (1000 * 60 * 60);
+          negativeHours = Math.max(deficit, exitDeficit);
+        } else {
+          // Trabalhou menos horas mesmo saindo no horário (entrou atrasado mas dentro da tolerância)
+          negativeHours = deficit;
+        }
       }
+      
+      // Arredondar para 2 casas decimais e garantir que seja positivo
+      negativeHours = Math.max(0, Math.round(negativeHours * 100) / 100);
     }
 
     // Preparar dados de atualização
@@ -520,37 +618,109 @@ router.post('/clock-out', protect, async (req, res) => {
       negativeHours: negativeHours > 0 ? negativeHours : null
     };
 
-    // Se houver horas extras, criar crédito no banco de horas
+    // Se houver horas extras, compensar débitos pendentes primeiro
+    // Depois criar crédito apenas com o que sobrar
     if (overtimeHours > 0) {
-      const hourBankCredit = await prisma.hourBankRecord.create({
-        data: {
+      // Compensar débitos pendentes automaticamente
+      const remainingOvertime = await compensateDebitsFromOvertime(
+        req.user.id,
+        overtimeHours,
+        today
+      );
+      
+      // Se sobrar horas extras após compensar débitos, criar crédito
+      if (remainingOvertime > 0) {
+        const hourBankCredit = await prisma.hourBankRecord.create({
+          data: {
+            employeeId: req.user.id,
+            date: today,
+            type: 'credit',
+            hours: remainingOvertime,
+            reason: `Hora extra automática do ponto - ${today}`,
+            createdBy: req.user.id,
+            status: 'pending'
+          }
+        });
+
+        updateData.hourBankCreditId = hourBankCredit.id;
+        
+        logger.info('Crédito de horas extras criado após compensação de débitos', {
           employeeId: req.user.id,
           date: today,
-          type: 'credit',
-          hours: overtimeHours,
-          reason: `Hora extra automática do ponto - ${today}`,
-          createdBy: req.user.id,
-          status: 'pending'
-        }
-      });
-
-      updateData.hourBankCreditId = hourBankCredit.id;
+          totalOvertimeHours: overtimeHours,
+          remainingOvertime,
+          compensatedDebits: overtimeHours - remainingOvertime
+        });
+      } else {
+        logger.info('Horas extras totalmente utilizadas para compensar débitos', {
+          employeeId: req.user.id,
+          date: today,
+          overtimeHours,
+          totalCompensated: overtimeHours
+        });
+      }
     }
 
-    // Se houver horas negativas e saldo positivo no banco de horas, criar débito
+    // Se houver horas negativas, criar débito no banco de horas
     if (negativeHours > 0) {
       const balance = await calculateHourBankBalance(req.user.id);
       
+      // Sempre criar débito quando houver horas negativas
+      // Se houver saldo positivo, abater primeiro
+      // Se não houver saldo suficiente ou for negativo, criar débito completo (saldo negativo)
+      let debitHours = negativeHours;
+      
       if (balance > 0) {
-        const debitHours = Math.min(negativeHours, balance);
+        // Abater do saldo disponível primeiro
+        const debitFromBalance = Math.min(negativeHours, balance);
+        const remainingDebit = negativeHours - debitFromBalance;
         
+        if (debitFromBalance > 0) {
+          // Criar débito abatendo do saldo disponível
+          const hourBankDebit = await prisma.hourBankRecord.create({
+            data: {
+              employeeId: req.user.id,
+              date: today,
+              type: 'debit',
+              hours: debitFromBalance,
+              reason: `Compensação automática de horas negativas (abatido do saldo) - ${today}`,
+              createdBy: req.user.id,
+              status: 'pending'
+            }
+          });
+
+          updateData.hourBankDebitId = hourBankDebit.id;
+        }
+        
+        // Se ainda houver déficit após abater do saldo, criar débito negativo
+        if (remainingDebit > 0) {
+          const hourBankNegativeDebit = await prisma.hourBankRecord.create({
+            data: {
+              employeeId: req.user.id,
+              date: today,
+              type: 'debit',
+              hours: remainingDebit,
+              reason: `Compensação automática de horas negativas (débito negativo) - ${today}`,
+              createdBy: req.user.id,
+              status: 'pending'
+            }
+          });
+          
+          // Se já havia um débito, não podemos salvar dois IDs, então mantemos o primeiro
+          // Em uma versão futura, podemos ter múltiplos débitos
+          if (!updateData.hourBankDebitId) {
+            updateData.hourBankDebitId = hourBankNegativeDebit.id;
+          }
+        }
+      } else {
+        // Sem saldo positivo, criar débito negativo completo
         const hourBankDebit = await prisma.hourBankRecord.create({
           data: {
             employeeId: req.user.id,
             date: today,
             type: 'debit',
             hours: debitHours,
-            reason: `Compensação automática de horas negativas - ${today}`,
+            reason: `Compensação automática de horas negativas (saldo negativo) - ${today}`,
             createdBy: req.user.id,
             status: 'pending'
           }
@@ -558,6 +728,14 @@ router.post('/clock-out', protect, async (req, res) => {
 
         updateData.hourBankDebitId = hourBankDebit.id;
       }
+      
+      logger.info('Débito criado para horas negativas', {
+        employeeId: req.user.id,
+        date: today,
+        negativeHours,
+        balance,
+        debitHours
+      });
     }
 
     const updatedRecord = await prisma.timeClock.update({
