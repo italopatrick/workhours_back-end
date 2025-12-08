@@ -12,9 +12,32 @@ CREATE TABLE IF NOT EXISTS "time_clock_justifications" (
 -- CreateIndex
 CREATE UNIQUE INDEX IF NOT EXISTS "time_clock_justifications_reason_key" ON "time_clock_justifications"("reason");
 
--- AlterTable
-ALTER TABLE "time_clocks" ADD COLUMN IF NOT EXISTS "justificationId" TEXT;
+-- AlterTable: Adicionar coluna justificationId se não existir
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'time_clocks' 
+        AND column_name = 'justificationId'
+    ) THEN
+        ALTER TABLE "time_clocks" ADD COLUMN "justificationId" TEXT;
+    END IF;
+END $$;
 
--- AddForeignKey
-ALTER TABLE "time_clocks" ADD CONSTRAINT "time_clocks_justificationId_fkey" FOREIGN KEY ("justificationId") REFERENCES "time_clock_justifications"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+-- AddForeignKey: Criar constraint apenas se não existir
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.table_constraints 
+        WHERE constraint_name = 'time_clocks_justificationId_fkey'
+        AND table_name = 'time_clocks'
+    ) THEN
+        ALTER TABLE "time_clocks" 
+        ADD CONSTRAINT "time_clocks_justificationId_fkey" 
+        FOREIGN KEY ("justificationId") 
+        REFERENCES "time_clock_justifications"("id") 
+        ON DELETE SET NULL 
+        ON UPDATE CASCADE;
+    END IF;
+END $$;
 
