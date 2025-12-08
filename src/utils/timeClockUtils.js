@@ -2,6 +2,8 @@
  * Utilities for time clock calculations
  */
 
+import logger from './logger.js';
+
 /**
  * Calculate worked hours between two times (excluding lunch break)
  * @param {Date} entryTime - Entry time
@@ -77,18 +79,44 @@ export function calculateOvertimeHours(exitTime, scheduledEndTime) {
  * @returns {Object|null} Schedule object { startTime, endTime } or null
  */
 export function getWorkScheduleForDay(user, date) {
+
   if (!user?.workSchedule) {
+    logger.debug('getWorkScheduleForDay - workSchedule não encontrado', {
+      userId: user?.id,
+      hasWorkSchedule: !!user?.workSchedule
+    });
     return null;
   }
 
   const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
-  const dayName = dayNames[date.getDay()];
+  const dayIndex = date.getDay();
+  const dayName = dayNames[dayIndex];
+
+  logger.debug('getWorkScheduleForDay - verificando jornada', {
+    userId: user.id,
+    date: date.toISOString().split('T')[0],
+    dayIndex,
+    dayName,
+    workScheduleKeys: Object.keys(user.workSchedule || {}),
+    scheduleForDay: user.workSchedule[dayName]
+  });
 
   const schedule = user.workSchedule[dayName];
   
   if (!schedule || schedule === null) {
+    logger.debug('getWorkScheduleForDay - não há jornada para este dia', {
+      userId: user.id,
+      dayName,
+      workSchedule: user.workSchedule
+    });
     return null;
   }
+
+  logger.debug('getWorkScheduleForDay - jornada encontrada', {
+    userId: user.id,
+    dayName,
+    schedule
+  });
 
   return schedule;
 }

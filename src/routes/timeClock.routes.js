@@ -18,25 +18,57 @@ const router = express.Router();
 
 // Helper: Get or create time clock record for today
 async function getOrCreateTimeClockRecord(employeeId, date) {
-  const existingRecord = await prisma.timeClock.findUnique({
-    where: {
-      employeeId_date: {
+  logger.info('getOrCreateTimeClockRecord - buscando registro existente', {
+    employeeId,
+    date
+  });
+
+  try {
+    const existingRecord = await prisma.timeClock.findUnique({
+      where: {
+        employeeId_date: {
+          employeeId,
+          date
+        }
+      }
+    });
+
+    if (existingRecord) {
+      logger.info('getOrCreateTimeClockRecord - registro existente encontrado', {
+        recordId: existingRecord.id,
+        employeeId,
+        date
+      });
+      return existingRecord;
+    }
+
+    logger.info('getOrCreateTimeClockRecord - criando novo registro', {
+      employeeId,
+      date
+    });
+
+    const newRecord = await prisma.timeClock.create({
+      data: {
         employeeId,
         date
       }
-    }
-  });
+    });
 
-  if (existingRecord) {
-    return existingRecord;
-  }
-
-  return await prisma.timeClock.create({
-    data: {
+    logger.info('getOrCreateTimeClockRecord - registro criado com sucesso', {
+      recordId: newRecord.id,
       employeeId,
       date
-    }
-  });
+    });
+
+    return newRecord;
+  } catch (error) {
+    logger.logError(error, {
+      context: 'getOrCreateTimeClockRecord - erro ao criar/buscar registro',
+      employeeId,
+      date
+    });
+    throw error;
+  }
 }
 
 // Helper: Calculate balance for hour bank
@@ -129,6 +161,12 @@ router.post('/clock-in', protect, async (req, res) => {
     const now = new Date();
     const today = formatDateString(now);
 
+    logger.info('Preparando para criar/atualizar registro de ponto', {
+      employeeId: req.user.id,
+      date: today,
+      currentDate: now.toISOString()
+    });
+
     // Verificar se já bateu entrada hoje
     const existingRecord = await prisma.timeClock.findUnique({
       where: {
@@ -139,18 +177,55 @@ router.post('/clock-in', protect, async (req, res) => {
       }
     });
 
+    logger.info('Verificação de registro existente', {
+      employeeId: req.user.id,
+      date: today,
+      exists: !!existingRecord,
+      hasEntryTime: !!existingRecord?.entryTime
+    });
+
     if (existingRecord?.entryTime) {
+      logger.warn('Tentativa de registrar entrada duplicada', {
+        employeeId: req.user.id,
+        date: today,
+        recordId: existingRecord.id
+      });
       return res.status(400).json({ error: 'Entrada já registrada para hoje' });
     }
 
     // Verificar jornada do dia
     const schedule = getWorkScheduleForDay(employee, now);
+    logger.info('Verificação de jornada do dia', {
+      employeeId: req.user.id,
+      date: today,
+      dayOfWeek: now.getDay(),
+      hasSchedule: !!schedule,
+      schedule
+    });
+
     if (!schedule) {
+      logger.warn('Não há jornada configurada para este dia da semana', {
+        employeeId: req.user.id,
+        date: today,
+        dayOfWeek: now.getDay(),
+        workSchedule: employee.workSchedule
+      });
       return res.status(400).json({ error: 'Não há jornada configurada para este dia da semana' });
     }
 
     // Criar ou atualizar registro
+    logger.info('Chamando getOrCreateTimeClockRecord', {
+      employeeId: req.user.id,
+      date: today
+    });
+
     const record = await getOrCreateTimeClockRecord(req.user.id, today);
+    
+    logger.info('Registro obtido/criado, atualizando entrada', {
+      recordId: record.id,
+      employeeId: req.user.id,
+      date: today
+    });
     
     const updatedRecord = await prisma.timeClock.update({
       where: { id: record.id },

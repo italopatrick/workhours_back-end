@@ -389,8 +389,11 @@ router.patch('/:id/role', protect, admin, async (req, res) => {
 const handleWorkScheduleUpdate = async (req, res) => {
   try {
     const { workSchedule, lunchBreakHours, lateTolerance } = req.body;
+    const isPost = req.method === 'POST';
+    const isPatch = req.method === 'PATCH';
     
-    logger.info('Atualizando jornada de trabalho', { 
+    logger.info(`${isPost ? 'Criando' : 'Atualizando'} jornada de trabalho`, { 
+      method: req.method,
       employeeId: req.params.id, 
       workSchedule: workSchedule ? 'presente' : 'ausente',
       workScheduleKeys: workSchedule ? Object.keys(workSchedule) : [],
@@ -401,6 +404,42 @@ const handleWorkScheduleUpdate = async (req, res) => {
     const user = await findUserById(req.params.id);
     if (!user) {
       return res.status(404).json({ message: 'Funcionário não encontrado' });
+    }
+
+    // Verificar se já existe jornada cadastrada
+    const hasExistingSchedule = !!user.workSchedule && 
+      Object.values(user.workSchedule || {}).some(day => 
+        day !== null && day !== undefined && typeof day === 'object' && day.startTime && day.endTime
+      );
+
+    logger.info('Estado da jornada atual', {
+      employeeId: user.id,
+      hasExistingSchedule,
+      method: req.method,
+      workScheduleExists: !!user.workSchedule,
+      workSchedule: user.workSchedule
+    });
+
+    // POST: só deve criar se não existir jornada
+    if (isPost && hasExistingSchedule) {
+      logger.warn('Tentativa de criar jornada que já existe - use PATCH para atualizar', {
+        employeeId: user.id,
+        hasExistingSchedule
+      });
+      return res.status(400).json({ 
+        message: 'Jornada de trabalho já cadastrada para este funcionário. Use PATCH para atualizar.' 
+      });
+    }
+
+    // PATCH: só deve atualizar se já existir jornada
+    if (isPatch && !hasExistingSchedule) {
+      logger.warn('Tentativa de atualizar jornada que não existe - use POST para criar', {
+        employeeId: user.id,
+        hasExistingSchedule
+      });
+      return res.status(400).json({ 
+        message: 'Jornada de trabalho não cadastrada para este funcionário. Use POST para criar.' 
+      });
     }
 
     const updateData = {};
@@ -491,8 +530,10 @@ const handleWorkScheduleUpdate = async (req, res) => {
     // Verificar novamente do banco para confirmar que foi salvo
     const verifiedUser = await findUserById(updatedUser.id);
     
-    logger.info('Jornada atualizada com sucesso', { 
+    logger.info(`Jornada ${isPost ? 'criada' : 'atualizada'} com sucesso`, { 
       employeeId: updatedUser.id,
+      method: req.method,
+      action: isPost ? 'create' : 'update',
       hasWorkSchedule: !!updatedUser.workSchedule,
       workScheduleType: typeof updatedUser.workSchedule,
       workScheduleString: updatedUser.workSchedule ? JSON.stringify(updatedUser.workSchedule) : 'null',
@@ -511,17 +552,21 @@ const handleWorkScheduleUpdate = async (req, res) => {
 
     // Registrar log de auditoria
     const requestMeta = getRequestMetadata(req);
+    const action = isPost ? 'Criar' : 'Atualizar';
     await logAudit({
-      action: 'employee_created', // Usando ação genérica, pode criar uma específica depois
+      action: isPost ? 'employee_created' : 'employee_updated',
       entityType: 'employee',
       entityId: updatedUser.id,
       userId: req.user.id,
       targetUserId: updatedUser.id,
-      description: `Jornada de trabalho atualizada para ${updatedUser.name}`,
+      description: `Jornada de trabalho ${isPost ? 'criada' : 'atualizada'} para ${updatedUser.name}`,
       metadata: {
+        method: req.method,
+        action,
         workSchedule,
         lunchBreakHours,
-        lateTolerance
+        lateTolerance,
+        hadExistingSchedule: hasExistingSchedule
       },
       ...requestMeta
     });
