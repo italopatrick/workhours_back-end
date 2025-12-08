@@ -206,12 +206,54 @@ export async function updateUser(id, data) {
     data.externalId = data.externalId ? String(data.externalId) : null;
   }
 
-  const user = await prisma.user.update({
-    where: { id },
-    data
+  // Garantir que campos JSON sejam atualizados corretamente mesmo se estiverem NULL
+  // O Prisma precisa receber o objeto JSON diretamente
+  const updateData = { ...data };
+  
+  // Log detalhado antes do update
+  const logger = (await import('../utils/logger.js')).default;
+  
+  if (data.workSchedule !== undefined) {
+    logger.debug('updateUser - atualizando workSchedule', {
+      userId: id,
+      workScheduleType: typeof data.workSchedule,
+      workScheduleValue: data.workSchedule,
+      workScheduleString: typeof data.workSchedule === 'object' ? JSON.stringify(data.workSchedule) : data.workSchedule
+    });
+  }
+  logger.debug('updateUser - dados antes do update Prisma', {
+    userId: id,
+    updateDataKeys: Object.keys(updateData),
+    workSchedulePresent: updateData.workSchedule !== undefined,
+    workScheduleType: typeof updateData.workSchedule,
+    workScheduleIsNull: updateData.workSchedule === null,
+    workScheduleValue: updateData.workSchedule
   });
 
-  return user;
+  try {
+    const user = await prisma.user.update({
+      where: { id },
+      data: updateData
+    });
+
+    logger.debug('updateUser - update Prisma concluído', {
+      userId: user.id,
+      hasWorkSchedule: !!user.workSchedule,
+      workScheduleType: typeof user.workSchedule,
+      workScheduleValue: user.workSchedule
+    });
+
+    return user;
+  } catch (error) {
+    logger.error('updateUser - erro no Prisma update', {
+      userId: id,
+      error: error.message,
+      errorCode: error.code,
+      updateDataKeys: Object.keys(updateData),
+      workSchedulePresent: updateData.workSchedule !== undefined
+    });
+    throw error;
+  }
 }
 
 /**

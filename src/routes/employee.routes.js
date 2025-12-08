@@ -385,8 +385,8 @@ router.patch('/:id/role', protect, admin, async (req, res) => {
   }
 });
 
-// Atualizar jornada de trabalho (admin only)
-router.patch('/:id/work-schedule', protect, admin, async (req, res) => {
+// Função compartilhada para criar/atualizar jornada de trabalho
+const handleWorkScheduleUpdate = async (req, res) => {
   try {
     const { workSchedule, lunchBreakHours, lateTolerance } = req.body;
     
@@ -471,9 +471,19 @@ router.patch('/:id/work-schedule', protect, admin, async (req, res) => {
         hasWorkSchedule: !!updateData.workSchedule,
         workScheduleType: typeof updateData.workSchedule,
         workScheduleString: updateData.workSchedule ? JSON.stringify(updateData.workSchedule) : 'null',
+        workScheduleValue: updateData.workSchedule,
         lunchBreakHours: updateData.lunchBreakHours,
-        lateTolerance: updateData.lateTolerance
+        lateTolerance: updateData.lateTolerance,
+        updateDataKeys: Object.keys(updateData)
       }
+    });
+
+    // Verificar estado atual do usuário antes de atualizar
+    logger.info('Estado atual do usuário antes do update', {
+      employeeId: user.id,
+      hasWorkSchedule: !!user.workSchedule,
+      workScheduleType: typeof user.workSchedule,
+      workScheduleValue: user.workSchedule
     });
 
     const updatedUser = await updateUser(user.id, updateData);
@@ -535,6 +545,11 @@ router.patch('/:id/work-schedule', protect, admin, async (req, res) => {
     logger.logError(error, { context: 'Atualizar jornada de trabalho', employeeId: req.params.id, userId: req.user?._id });
     res.status(500).json({ message: 'Erro no servidor', error: error.message });
   }
-});
+};
+
+// Criar ou atualizar jornada de trabalho (admin only)
+// POST para criar inicialmente, PATCH para atualizar
+router.post('/:id/work-schedule', protect, admin, handleWorkScheduleUpdate);
+router.patch('/:id/work-schedule', protect, admin, handleWorkScheduleUpdate);
 
 export default router;
