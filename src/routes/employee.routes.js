@@ -553,8 +553,10 @@ const handleWorkScheduleUpdate = async (req, res) => {
     // Registrar log de auditoria
     const requestMeta = getRequestMetadata(req);
     const action = isPost ? 'Criar' : 'Atualizar';
+    // Usando employee_created para ambos os casos até a migration ser aplicada
+    // TODO: Usar employee_work_schedule_updated quando a migration for aplicada
     await logAudit({
-      action: isPost ? 'employee_created' : 'employee_updated',
+      action: 'employee_created',
       entityType: 'employee',
       entityId: updatedUser.id,
       userId: req.user.id,

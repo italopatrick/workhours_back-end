@@ -47,6 +47,7 @@ enum AuditAction {
   employee_limit_changed
   employee_exception_added
   employee_exception_removed
+  employee_work_schedule_updated
   settings_updated
   settings_logo_updated
   timeclock_entry
