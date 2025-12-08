@@ -1,16 +1,56 @@
 import nodemailer from 'nodemailer';
 import logger from '../utils/logger.js';
 
+// Validar variáveis de ambiente SMTP
+function validateSmtpConfig() {
+  const required = ['SMTP_HOST', 'SMTP_PORT', 'SMTP_USER', 'SMTP_PASS'];
+  const missing = required.filter(key => !process.env[key]);
+  
+  if (missing.length > 0) {
+    logger.warn('Variáveis SMTP não configuradas', { missing });
+    return false;
+  }
+  
+  return true;
+}
+
 // Configuração do transporte de email
-const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST,
-  port: process.env.SMTP_PORT,
-  secure: process.env.SMTP_SECURE === 'true',
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
-  },
-});
+let transporter = null;
+
+try {
+  if (validateSmtpConfig()) {
+    const port = parseInt(process.env.SMTP_PORT) || 587;
+    const secure = process.env.SMTP_SECURE === 'true' || port === 465;
+    
+    transporter = nodemailer.createTransport({
+      host: process.env.SMTP_HOST,
+      port: port,
+      secure: secure, // true para 465, false para outras portas
+      auth: {
+        user: process.env.SMTP_USER,
+        pass: process.env.SMTP_PASS,
+      },
+      // Adicionar opções para Gmail
+      tls: {
+        rejectUnauthorized: false // Aceitar certificados auto-assinados
+      },
+      // Debug: habilitar logs detalhados em desenvolvimento
+      debug: process.env.NODE_ENV === 'development',
+      logger: process.env.NODE_ENV === 'development'
+    });
+    
+    logger.info('Transporte SMTP configurado', {
+      host: process.env.SMTP_HOST,
+      port: port,
+      secure: secure,
+      user: process.env.SMTP_USER ? `${process.env.SMTP_USER.substring(0, 3)}***` : 'não configurado'
+    });
+  } else {
+    logger.warn('Transporte SMTP não configurado - emails não serão enviados');
+  }
+} catch (error) {
+  logger.logError(error, { context: 'Erro ao configurar transporte SMTP' });
+}
 
 /**
  * Send time clock confirmation email
@@ -21,9 +61,30 @@ const transporter = nodemailer.createTransport({
  */
 export async function sendTimeClockEmail(employee, timeClockRecord, type) {
   try {
+    // Verificar se o transporte está configurado
+    if (!transporter) {
+      logger.warn('Transporte SMTP não configurado - email não será enviado', {
+        employeeId: employee?.id,
+        employeeEmail: employee?.email
+      });
+      return;
+    }
+    
     if (!employee?.email) {
       logger.warn('Email do funcionário não encontrado', { employeeId: employee?.id });
       return;
+    }
+    
+    // Testar conexão SMTP antes de enviar
+    try {
+      await transporter.verify();
+      logger.debug('Conexão SMTP verificada com sucesso');
+    } catch (verifyError) {
+      logger.logError(verifyError, {
+        context: 'Erro ao verificar conexão SMTP',
+        hint: 'Verifique as credenciais SMTP no arquivo .env'
+      });
+      throw verifyError;
     }
 
     const typeLabels = {
@@ -139,12 +200,27 @@ export async function sendTimeClockEmail(employee, timeClockRecord, type) {
       date: timeClockRecord.date
     });
   } catch (error) {
-    logger.logError(error, {
-      context: 'Enviar email de comprovante de ponto',
-      employeeId: employee?.id,
-      type
-    });
-    // Não lançar erro para não interromper o fluxo
+    // Erro específico de autenticação do Gmail
+    if (error.message && error.message.includes('Invalid login')) {
+      logger.error('Erro de autenticação SMTP - Credenciais inválidas', {
+        employeeId: employee?.id,
+        type,
+        error: error.message,
+        troubleshooting: {
+          gmail: 'Para Gmail: 1) Ative 2FA, 2) Gere App Password em https://myaccount.google.com/apppasswords, 3) Use a App Password no SMTP_PASS',
+          smtpHost: process.env.SMTP_HOST,
+          smtpPort: process.env.SMTP_PORT,
+          smtpUser: process.env.SMTP_USER ? `${process.env.SMTP_USER.substring(0, 3)}***` : 'não configurado'
+        }
+      });
+    } else {
+      logger.logError(error, {
+        context: 'Enviar email de comprovante de ponto',
+        employeeId: employee?.id,
+        type
+      });
+    }
+    // Não lançar erro para não interromper o fluxo de registro de ponto
   }
 }
 
