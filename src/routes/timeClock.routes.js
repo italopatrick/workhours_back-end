@@ -273,6 +273,37 @@ router.post('/clock-in', protect, async (req, res) => {
       });
     }
 
+    // Calcular atraso na entrada
+    let lateMinutes = 0;
+    if (schedule) {
+      lateMinutes = calculateLateMinutes(
+        now,
+        schedule.startTime,
+        lateTolerance
+      );
+    }
+
+    // Validar se precisa de justificativa (após calcular lateMinutes)
+    if (lateMinutes > lateTolerance && req.user.role !== 'admin') {
+      const { justification } = req.body;
+      
+      if (!justification || justification.trim().length === 0) {
+        logger.warn('Tentativa de registrar entrada atrasada sem justificativa', {
+          employeeId: req.user.id,
+          date: today,
+          lateMinutes,
+          tolerance: lateTolerance
+        });
+        
+        return res.status(400).json({
+          error: 'Justificativa obrigatória para atraso',
+          requiresJustification: true,
+          lateMinutes,
+          tolerance: lateTolerance
+        });
+      }
+    }
+
     // Criar ou atualizar registro
     logger.info('Chamando getOrCreateTimeClockRecord', {
       employeeId: req.user.id,
@@ -287,11 +318,18 @@ router.post('/clock-in', protect, async (req, res) => {
       date: today
     });
     
+    // Preparar dados de atualização incluindo justificativa se fornecida
+    const updateData = {
+      entryTime: now,
+      lateMinutes: lateMinutes > 0 ? lateMinutes : null,
+      ...(req.body.justification && req.body.justification.trim().length > 0 && { 
+        justification: req.body.justification.trim() 
+      })
+    };
+    
     const updatedRecord = await prisma.timeClock.update({
       where: { id: record.id },
-      data: {
-        entryTime: now
-      },
+      data: updateData,
       include: {
         employee: {
           select: {
@@ -628,15 +666,66 @@ router.post('/clock-out', protect, async (req, res) => {
       negativeHours = Math.max(0, Math.round(negativeHours * 100) / 100);
     }
 
+    // Adicionar minutos não trabalhados na saída ao atraso total
+    if (negativeHours > 0) {
+      const minutesNotWorked = Math.round(negativeHours * 60);
+      lateMinutes = lateMinutes + minutesNotWorked;
+      
+      logger.info('Atraso total calculado incluindo horas não trabalhadas', {
+        employeeId: req.user.id,
+        date: today,
+        lateMinutesEntry: lateMinutes - minutesNotWorked,
+        minutesNotWorked,
+        lateMinutesTotal: lateMinutes
+      });
+    }
+
+    // Validar justificativa se necessário (após calcular negativeHours e lateMinutes)
+    const lateTolerance = employee.lateTolerance || 10;
+    const needsJustification = (lateMinutes > lateTolerance || negativeHours > 0) && req.user.role !== 'admin';
+
+    if (needsJustification) {
+      const { justification } = req.body;
+      
+      if (!justification || justification.trim().length === 0) {
+        logger.warn('Tentativa de registrar saída sem justificativa quando necessário', {
+          employeeId: req.user.id,
+          date: today,
+          lateMinutes,
+          negativeHours,
+          tolerance: lateTolerance
+        });
+        
+        return res.status(400).json({
+          error: 'Justificativa obrigatória',
+          requiresJustification: true,
+          reason: negativeHours > 0 ? 'horas_nao_cumpridas' : 'atraso_entrada',
+          lateMinutes,
+          negativeHours,
+          tolerance: lateTolerance
+        });
+      }
+    }
+
     // Preparar dados de atualização
     const updateData = {
       exitTime: now,
       totalWorkedHours,
       scheduledHours,
-      lateMinutes,
+      lateMinutes: lateMinutes > 0 ? lateMinutes : null,
       overtimeHours: overtimeHours > 0 ? overtimeHours : null,
       negativeHours: negativeHours > 0 ? negativeHours : null
     };
+
+    // Adicionar/atualizar justificativa se fornecida
+    if (req.body.justification && req.body.justification.trim().length > 0) {
+      if (record.justification) {
+        // Se já existe justificativa (da entrada), mesclar
+        updateData.justification = `${record.justification}\n\nJustificativa saída: ${req.body.justification.trim()}`;
+      } else {
+        updateData.justification = req.body.justification.trim();
+      }
+    }
 
     // Se houver horas extras, compensar débitos pendentes primeiro
     // Depois criar crédito apenas com o que sobrar
