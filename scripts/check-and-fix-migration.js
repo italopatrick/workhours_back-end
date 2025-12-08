@@ -21,15 +21,15 @@ async function checkAndFix() {
     console.log('🔍 Verificando se a tabela time_clock_justifications existe...\n');
     
     // Verificar se a tabela existe
-    const tableCheck = await prisma.$queryRaw`
+    const tableCheck = await prisma.$queryRawUnsafe(`
       SELECT EXISTS (
         SELECT FROM information_schema.tables 
         WHERE table_schema = 'public' 
         AND table_name = 'time_clock_justifications'
       ) as exists;
-    `;
+    `);
     
-    const tableExists = tableCheck[0]?.exists || false;
+    const tableExists = Array.isArray(tableCheck) && tableCheck[0]?.exists || false;
     
     if (tableExists) {
       console.log('✅ Tabela time_clock_justifications já existe!');
@@ -60,7 +60,7 @@ async function checkAndFix() {
       
       if (!columnExists) {
         console.log('\n⚠️  Coluna justificationId não existe em time_clocks. Criando...');
-        await prisma.$executeRaw`ALTER TABLE "time_clocks" ADD COLUMN IF NOT EXISTS "justificationId" TEXT;`;
+        await prisma.$executeRawUnsafe(`ALTER TABLE "time_clocks" ADD COLUMN IF NOT EXISTS "justificationId" TEXT;`);
         console.log('✅ Coluna justificationId criada!');
       }
       
@@ -69,7 +69,7 @@ async function checkAndFix() {
       console.log('📝 Criando tabela agora...\n');
       
       // Criar tabela
-      await prisma.$executeRaw`
+      await prisma.$executeRawUnsafe(`
         CREATE TABLE "time_clock_justifications" (
           "id" TEXT NOT NULL,
           "reason" TEXT NOT NULL,
@@ -78,18 +78,18 @@ async function checkAndFix() {
           "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
           CONSTRAINT "time_clock_justifications_pkey" PRIMARY KEY ("id")
         );
-      `;
+      `);
       
       // Criar índice único
-      await prisma.$executeRaw`
+      await prisma.$executeRawUnsafe(`
         CREATE UNIQUE INDEX IF NOT EXISTS "time_clock_justifications_reason_key" 
         ON "time_clock_justifications"("reason");
-      `;
+      `);
       
       // Adicionar coluna em time_clocks
-      await prisma.$executeRaw`
+      await prisma.$executeRawUnsafe(`
         ALTER TABLE "time_clocks" ADD COLUMN IF NOT EXISTS "justificationId" TEXT;
-      `;
+      `);
       
       // Criar foreign key
       const fkCheck = await prisma.$queryRawUnsafe(`
@@ -104,14 +104,14 @@ async function checkAndFix() {
       const fkExists = Array.isArray(fkCheck) && fkCheck[0]?.exists || false;
       
       if (!fkExists) {
-        await prisma.$executeRaw`
+        await prisma.$executeRawUnsafe(`
           ALTER TABLE "time_clocks" 
           ADD CONSTRAINT "time_clocks_justificationId_fkey" 
           FOREIGN KEY ("justificationId") 
           REFERENCES "time_clock_justifications"("id") 
           ON DELETE SET NULL 
           ON UPDATE CASCADE;
-        `;
+        `);
       }
       
       console.log('✅ Tabela time_clock_justifications criada com sucesso!');
