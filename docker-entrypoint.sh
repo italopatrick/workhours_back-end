@@ -30,7 +30,17 @@ if [ -n "$DATABASE_URL" ]; then
   # Executar migrations do Prisma
   npx prisma migrate deploy || {
     echo "⚠️  Aviso: Falha ao executar migrations. Verifique os logs acima."
-    echo "⚠️  Continuando com o servidor..."
+    echo "⚠️  Tentando aplicar migration de justificativas diretamente..."
+    node scripts/check-and-fix-migration.js || {
+      echo "⚠️  Falha ao aplicar migration manualmente. Continuando com o servidor..."
+    }
+  }
+  
+  # Verificar e corrigir migration de justificativas mesmo se migrate deploy passar
+  # (garantir que a tabela existe)
+  echo "🔍 Verificando tabela time_clock_justifications..."
+  node scripts/check-and-fix-migration.js || {
+    echo "⚠️  Aviso: Falha ao verificar/criar tabela de justificativas."
   }
 fi
 
