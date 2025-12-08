@@ -2,6 +2,7 @@ import express from 'express';
 import { protect, admin } from '../middleware/auth.js';
 import prisma from '../config/database.js';
 import { findUserById } from '../models/user.model.js';
+import { getWorkScheduleByEmployee } from '../models/workSchedule.model.js';
 import { logAudit, getRequestMetadata } from '../middleware/audit.js';
 import { sendTimeClockEmail } from '../services/emailService.js';
 import {
@@ -106,54 +107,23 @@ router.post('/clock-in', protect, async (req, res) => {
       return res.status(404).json({ error: 'Funcionário não encontrado' });
     }
 
+    // Buscar jornada da tabela normalizada
+    const workSchedules = await getWorkScheduleByEmployee(employee.id, true); // activeOnly = true
+    
     logger.info('Dados do funcionário buscado', {
       userId: employee.id,
-      hasWorkSchedule: !!employee.workSchedule,
-      workScheduleType: typeof employee.workSchedule,
-      workScheduleValue: employee.workSchedule,
-      workScheduleString: employee.workSchedule ? JSON.stringify(employee.workSchedule) : 'null',
+      workSchedulesCount: workSchedules?.length || 0,
+      hasWorkSchedules: !!(workSchedules && workSchedules.length > 0),
       lunchBreakHours: employee.lunchBreakHours,
       lateTolerance: employee.lateTolerance
     });
 
     // Validar jornada configurada
-    if (!employee.workSchedule) {
+    if (!workSchedules || workSchedules.length === 0) {
       logger.warn('Tentativa de bater ponto sem jornada configurada', { 
         userId: req.user.id,
         employeeId: employee.id,
-        workSchedule: employee.workSchedule
-      });
-      return res.status(400).json({ error: 'Jornada de trabalho não configurada. Entre em contato com o administrador.' });
-    }
-
-    // Verificar se pelo menos um dia tem jornada configurada
-    const workScheduleKeys = Object.keys(employee.workSchedule || {});
-    const workScheduleValues = Object.values(employee.workSchedule || {});
-    
-    logger.info('Análise do workSchedule', {
-      userId: employee.id,
-      workScheduleKeys,
-      workScheduleValuesCount: workScheduleValues.length,
-      workScheduleValues
-    });
-
-    const hasAtLeastOneDay = workScheduleValues.some(day => 
-      day !== null && day !== undefined && typeof day === 'object' && day.startTime && day.endTime
-    );
-    
-    logger.info('Validação de dias configurados', {
-      userId: employee.id,
-      hasAtLeastOneDay,
-      workSchedule: employee.workSchedule
-    });
-    
-    if (!hasAtLeastOneDay) {
-      logger.warn('Tentativa de bater ponto com jornada vazia', { 
-        userId: req.user.id,
-        employeeId: employee.id,
-        workSchedule: employee.workSchedule,
-        workScheduleKeys,
-        workScheduleValues
+        workSchedulesCount: workSchedules?.length || 0
       });
       return res.status(400).json({ error: 'Jornada de trabalho não configurada. Entre em contato com o administrador.' });
     }
@@ -193,8 +163,8 @@ router.post('/clock-in', protect, async (req, res) => {
       return res.status(400).json({ error: 'Entrada já registrada para hoje' });
     }
 
-    // Verificar jornada do dia
-    const schedule = getWorkScheduleForDay(employee, now);
+    // Verificar jornada do dia usando a nova estrutura
+    const schedule = getWorkScheduleForDay(workSchedules, now);
     logger.info('Verificação de jornada do dia', {
       employeeId: req.user.id,
       date: today,
@@ -208,7 +178,7 @@ router.post('/clock-in', protect, async (req, res) => {
         employeeId: req.user.id,
         date: today,
         dayOfWeek: now.getDay(),
-        workSchedule: employee.workSchedule
+        availableDays: workSchedules.map(s => s.dayOfWeek)
       });
       return res.status(400).json({ error: 'Não há jornada configurada para este dia da semana' });
     }
@@ -439,6 +409,9 @@ router.post('/clock-out', protect, async (req, res) => {
       return res.status(404).json({ error: 'Funcionário não encontrado' });
     }
 
+    // Buscar jornada da tabela normalizada
+    const workSchedules = await getWorkScheduleByEmployee(employee.id, true); // activeOnly = true
+
     const today = formatDateString(new Date());
 
     const record = await prisma.timeClock.findUnique({
@@ -459,7 +432,7 @@ router.post('/clock-out', protect, async (req, res) => {
     }
 
     const now = new Date();
-    const schedule = getWorkScheduleForDay(employee, now);
+    const schedule = getWorkScheduleForDay(workSchedules, now);
 
     // Calcular horas trabalhadas
     let totalWorkedHours = 0;
@@ -488,7 +461,7 @@ router.post('/clock-out', protect, async (req, res) => {
     }
 
     // Calcular horas esperadas do dia
-    const scheduledHours = getScheduledHoursForDay(employee, now);
+    const scheduledHours = getScheduledHoursForDay({ workSchedules, lunchBreakHours: employee.lunchBreakHours }, now);
 
     // Calcular horas negativas (se saiu antes do horário esperado)
     let negativeHours = 0;

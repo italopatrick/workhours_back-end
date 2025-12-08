@@ -3,6 +3,7 @@
  */
 
 import logger from './logger.js';
+import { getScheduleForDate, getScheduledHoursForDate } from './workScheduleUtils.js';
 
 /**
  * Calculate worked hours between two times (excluding lunch break)
@@ -74,79 +75,79 @@ export function calculateOvertimeHours(exitTime, scheduledEndTime) {
 
 /**
  * Get work schedule for a specific day
- * @param {Object} user - User object with workSchedule
+ * @param {Array|Object} workSchedulesOrUser - Array of WorkSchedule records OR User object with workSchedules relation
  * @param {Date} date - Date to get schedule for
  * @returns {Object|null} Schedule object { startTime, endTime } or null
  */
-export function getWorkScheduleForDay(user, date) {
-
-  if (!user?.workSchedule) {
-    logger.debug('getWorkScheduleForDay - workSchedule não encontrado', {
-      userId: user?.id,
-      hasWorkSchedule: !!user?.workSchedule
-    });
-    return null;
-  }
-
-  const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
-  const dayIndex = date.getDay();
-  const dayName = dayNames[dayIndex];
-
-  logger.debug('getWorkScheduleForDay - verificando jornada', {
-    userId: user.id,
-    date: date.toISOString().split('T')[0],
-    dayIndex,
-    dayName,
-    workScheduleKeys: Object.keys(user.workSchedule || {}),
-    scheduleForDay: user.workSchedule[dayName]
-  });
-
-  const schedule = user.workSchedule[dayName];
+export function getWorkScheduleForDay(workSchedulesOrUser, date) {
+  let workSchedules = null;
   
-  if (!schedule || schedule === null) {
-    logger.debug('getWorkScheduleForDay - não há jornada para este dia', {
-      userId: user.id,
-      dayName,
-      workSchedule: user.workSchedule
+  // Support both array of schedules or user object with workSchedules relation
+  if (Array.isArray(workSchedulesOrUser)) {
+    workSchedules = workSchedulesOrUser;
+  } else if (workSchedulesOrUser?.workSchedules) {
+    workSchedules = workSchedulesOrUser.workSchedules;
+  } else if (workSchedulesOrUser?.workSchedule) {
+    // Backward compatibility: if old JSON format exists, convert it
+    logger.warn('getWorkScheduleForDay - usando formato antigo (JSON), deve migrar para tabela normalizada', {
+      userId: workSchedulesOrUser?.id
     });
+    // Try to use old format for backward compatibility
+    const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+    const dayIndex = date.getDay();
+    const dayName = dayNames[dayIndex];
+    const schedule = workSchedulesOrUser.workSchedule?.[dayName];
+    
+    if (schedule && schedule !== null) {
+      return schedule;
+    }
     return null;
   }
-
-  logger.debug('getWorkScheduleForDay - jornada encontrada', {
-    userId: user.id,
-    dayName,
-    schedule
-  });
-
-  return schedule;
+  
+  return getScheduleForDate(workSchedules, date);
 }
 
 /**
  * Get scheduled hours for a specific day
- * @param {Object} user - User object with workSchedule and lunchBreakHours
+ * @param {Array|Object} workSchedulesOrUser - Array of WorkSchedule records OR User object with workSchedules relation and lunchBreakHours
  * @param {Date} date - Date to calculate for
  * @returns {number} Scheduled hours for the day
  */
-export function getScheduledHoursForDay(user, date) {
-  const schedule = getWorkScheduleForDay(user, date);
+export function getScheduledHoursForDay(workSchedulesOrUser, date) {
+  let workSchedules = null;
+  let lunchBreakHours = 0;
   
-  if (!schedule) {
-    return 0;
+  // Support both array of schedules or user object
+  if (Array.isArray(workSchedulesOrUser)) {
+    workSchedules = workSchedulesOrUser;
+  } else if (workSchedulesOrUser?.workSchedules) {
+    workSchedules = workSchedulesOrUser.workSchedules;
+    lunchBreakHours = workSchedulesOrUser.lunchBreakHours || 0;
+  } else if (workSchedulesOrUser?.workSchedule) {
+    // Backward compatibility: if old JSON format exists, calculate manually
+    logger.warn('getScheduledHoursForDay - usando formato antigo (JSON), deve migrar para tabela normalizada', {
+      userId: workSchedulesOrUser?.id
+    });
+    const schedule = getWorkScheduleForDay(workSchedulesOrUser, date);
+    
+    if (!schedule) {
+      return 0;
+    }
+    
+    const [startHour, startMinute] = schedule.startTime.split(':').map(Number);
+    const [endHour, endMinute] = schedule.endTime.split(':').map(Number);
+    
+    const startMinutes = startHour * 60 + startMinute;
+    const endMinutes = endHour * 60 + endMinute;
+    
+    const totalMinutes = endMinutes - startMinutes;
+    const totalHours = totalMinutes / 60;
+    
+    lunchBreakHours = workSchedulesOrUser.lunchBreakHours || 0;
+    return Math.max(0, totalHours - lunchBreakHours);
   }
-
-  const [startHour, startMinute] = schedule.startTime.split(':').map(Number);
-  const [endHour, endMinute] = schedule.endTime.split(':').map(Number);
-
-  const startMinutes = startHour * 60 + startMinute;
-  const endMinutes = endHour * 60 + endMinute;
-
-  const totalMinutes = endMinutes - startMinutes;
-  const totalHours = totalMinutes / 60;
-
-  // Subtract lunch break hours
-  const lunchBreakHours = user.lunchBreakHours || 0;
   
-  return totalHours - lunchBreakHours;
+  return getScheduledHoursForDate(workSchedules, date, lunchBreakHours);
 }
 
 /**

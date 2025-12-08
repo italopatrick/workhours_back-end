@@ -8,6 +8,13 @@ import {
   updateUser, 
   deleteUser 
 } from '../models/user.model.js';
+import {
+  createOrUpdateWorkSchedule,
+  getWorkScheduleByEmployee,
+  parseWorkScheduleArray,
+  convertWorkScheduleObjectToArray
+} from '../models/workSchedule.model.js';
+import { validateWorkSchedule } from '../utils/workScheduleUtils.js';
 import { logAudit, getRequestMetadata } from '../middleware/audit.js';
 import logger from '../utils/logger.js';
 
@@ -20,23 +27,34 @@ router.get('/', protect, async (req, res) => {
     // Se for funcionário normal, retorna apenas funcionários ativos (não admin)
     const query = req.user.role === 'admin' ? {} : { role: { not: 'admin' } };
     
-    const employees = await findUsers(query, {
-      orderBy: { name: 'asc' }
-    });
+      const employees = await findUsers(query, {
+        orderBy: { name: 'asc' }
+      });
       
-    // Formata os resultados
-    const formattedEmployees = employees.map(emp => ({
-      id: emp.id,
-      name: emp.name,
-      email: emp.email,
-      department: emp.department,
-      role: emp.role,
-      overtimeLimit: emp.overtimeLimit,
-      overtimeExceptions: emp.overtimeExceptions || [],
-      workSchedule: emp.workSchedule,
-      lunchBreakHours: emp.lunchBreakHours,
-      lateTolerance: emp.lateTolerance
-    }));
+      // Formata os resultados
+      const formattedEmployees = employees.map(emp => {
+        // Converter workSchedules para formato JSON (prioridade na nova tabela)
+        let workSchedule = null;
+        if (emp.workSchedules && emp.workSchedules.length > 0) {
+          workSchedule = parseWorkScheduleArray(emp.workSchedules);
+        } else if (emp.workSchedule) {
+          // Fallback para formato antigo durante migração
+          workSchedule = emp.workSchedule;
+        }
+
+        return {
+          id: emp.id,
+          name: emp.name,
+          email: emp.email,
+          department: emp.department,
+          role: emp.role,
+          overtimeLimit: emp.overtimeLimit,
+          overtimeExceptions: emp.overtimeExceptions || [],
+          workSchedule,
+          lunchBreakHours: emp.lunchBreakHours,
+          lateTolerance: emp.lateTolerance
+        };
+      });
       
     res.json(formattedEmployees);
   } catch (error) {
@@ -66,10 +84,36 @@ router.post('/', protect, admin, async (req, res) => {
       department,
       role: role || 'employee',
       overtimeLimit: overtimeLimit || null,
-      workSchedule: workSchedule || null,
+      workSchedule: workSchedule || null, // Manter para backward compatibility
       lunchBreakHours: lunchBreakHours ? Number(lunchBreakHours) : null,
       lateTolerance: lateTolerance ? Number(lateTolerance) : 10,
     });
+
+    // Se workSchedule foi fornecido, criar na nova tabela normalizada também
+    if (workSchedule) {
+      try {
+        const validation = validateWorkSchedule(workSchedule);
+        if (validation.isValid) {
+          const schedulesArray = convertWorkScheduleObjectToArray(workSchedule);
+          if (schedulesArray.length > 0) {
+            await createOrUpdateWorkSchedule(user.id, schedulesArray);
+            logger.info('Jornada criada na tabela normalizada para novo funcionário', {
+              userId: user.id,
+              schedulesCount: schedulesArray.length
+            });
+          }
+        }
+      } catch (error) {
+        logger.logError(error, { context: 'Erro ao criar jornada normalizada para novo funcionário', userId: user.id });
+        // Não falhar a criação do usuário se a jornada falhar
+      }
+    }
+
+    // Buscar jornada atualizada para retornar
+    const schedules = await getWorkScheduleByEmployee(user.id, false);
+    const workScheduleObject = schedules && schedules.length > 0 
+      ? parseWorkScheduleArray(schedules) 
+      : user.workSchedule;
 
     // Registrar log de auditoria
     const requestMeta = getRequestMetadata(req);
@@ -86,7 +130,7 @@ router.post('/', protect, admin, async (req, res) => {
         department,
         role: role || 'employee',
         overtimeLimit: overtimeLimit || null,
-        workSchedule,
+        workSchedule: workScheduleObject,
         lunchBreakHours,
         lateTolerance
       },
@@ -101,7 +145,7 @@ router.post('/', protect, admin, async (req, res) => {
       role: user.role,
       overtimeLimit: user.overtimeLimit,
       overtimeExceptions: user.overtimeExceptions || [],
-      workSchedule: user.workSchedule,
+      workSchedule: workScheduleObject,
       lunchBreakHours: user.lunchBreakHours,
       lateTolerance: user.lateTolerance
     });
@@ -406,31 +450,15 @@ const handleWorkScheduleUpdate = async (req, res) => {
       return res.status(404).json({ message: 'Funcionário não encontrado' });
     }
 
-    // Verificar se já existe jornada cadastrada E válida
-    // Considera apenas jornadas que têm pelo menos um dia configurado com horários válidos
-    const hasExistingSchedule = !!user.workSchedule && 
-      typeof user.workSchedule === 'object' &&
-      user.workSchedule !== null &&
-      Object.values(user.workSchedule).some(day => 
-        day !== null && 
-        day !== undefined && 
-        typeof day === 'object' && 
-        day.startTime && 
-        day.endTime &&
-        day.startTime.trim && day.startTime.trim() !== '' &&
-        day.endTime.trim && day.endTime.trim() !== ''
-      );
+    // Buscar jornada existente na nova tabela normalizada
+    const existingSchedules = await getWorkScheduleByEmployee(user.id, false);
+    const hasExistingSchedule = existingSchedules && existingSchedules.length > 0;
 
     logger.info('Estado da jornada atual', {
       employeeId: user.id,
       hasExistingSchedule,
-      method: req.method,
-      workScheduleExists: !!user.workSchedule,
-      workScheduleType: typeof user.workSchedule,
-      workScheduleIsNull: user.workSchedule === null,
-      workSchedule: user.workSchedule,
-      workScheduleKeys: user.workSchedule ? Object.keys(user.workSchedule) : [],
-      workScheduleValues: user.workSchedule ? Object.values(user.workSchedule) : []
+      existingSchedulesCount: existingSchedules?.length || 0,
+      method: req.method
     });
 
     // POST: só deve criar se não existir jornada válida
@@ -438,176 +466,167 @@ const handleWorkScheduleUpdate = async (req, res) => {
       logger.warn('Tentativa de criar jornada que já existe - use PATCH para atualizar', {
         employeeId: user.id,
         hasExistingSchedule,
-        workSchedule: user.workSchedule
+        existingSchedulesCount: existingSchedules.length
       });
       return res.status(400).json({ 
         message: 'Jornada de trabalho já cadastrada para este funcionário. Use PATCH para atualizar.' 
       });
     }
 
-    // PATCH: só deve atualizar se já existir jornada válida
-    // Mas se não existir, vamos permitir criar via PATCH também (mais flexível)
+    // PATCH: pode criar ou atualizar (flexível)
     if (isPatch && !hasExistingSchedule) {
       logger.info('PATCH usado para criar jornada (não existia antes)', {
         employeeId: user.id,
-        hasExistingSchedule,
-        workSchedule: user.workSchedule
+        hasExistingSchedule
       });
-      // Permitir que PATCH também crie se não existir (para compatibilidade)
-      // Mas vamos avisar no log
     }
 
-    const updateData = {};
+    // Validar e processar workSchedule
+    if (workSchedule === undefined) {
+      return res.status(400).json({ message: 'Jornada de trabalho é obrigatória.' });
+    }
 
-    // Validar se workSchedule tem pelo menos um dia configurado
-    if (workSchedule !== undefined) {
-      // Se workSchedule for string, tentar fazer parse
-      let parsedWorkSchedule = workSchedule;
-      if (typeof workSchedule === 'string') {
-        try {
-          parsedWorkSchedule = JSON.parse(workSchedule);
-        } catch (e) {
-          logger.warn('Erro ao fazer parse do workSchedule', { 
-            employeeId: req.params.id,
-            error: e.message,
-            workSchedule 
-          });
-          return res.status(400).json({ 
-            message: 'Formato de jornada de trabalho inválido.' 
-          });
-        }
-      }
-
-      // Verificar se é um objeto válido
-      if (typeof parsedWorkSchedule !== 'object' || parsedWorkSchedule === null) {
-        logger.warn('workSchedule não é um objeto válido', { 
+    // Se workSchedule for string, tentar fazer parse
+    let parsedWorkSchedule = workSchedule;
+    if (typeof workSchedule === 'string') {
+      try {
+        parsedWorkSchedule = JSON.parse(workSchedule);
+      } catch (e) {
+        logger.warn('Erro ao fazer parse do workSchedule', { 
           employeeId: req.params.id,
-          workScheduleType: typeof parsedWorkSchedule,
+          error: e.message,
           workSchedule 
         });
         return res.status(400).json({ 
           message: 'Formato de jornada de trabalho inválido.' 
         });
       }
-
-      const hasAtLeastOneDay = Object.values(parsedWorkSchedule).some(day => 
-        day !== null && day !== undefined && typeof day === 'object' && day.startTime && day.endTime
-      );
-      
-      if (!hasAtLeastOneDay) {
-        logger.warn('Tentativa de salvar jornada sem dias configurados', { 
-          employeeId: req.params.id,
-          workSchedule: parsedWorkSchedule 
-        });
-        return res.status(400).json({ 
-          message: 'É necessário configurar pelo menos um dia da semana com horário de trabalho.' 
-        });
-      }
-      
-      logger.info('Jornada validada com sucesso', { 
-        employeeId: req.params.id,
-        daysConfigured: Object.entries(parsedWorkSchedule)
-          .filter(([_, day]) => day !== null && day !== undefined && typeof day === 'object' && day.startTime && day.endTime)
-          .map(([day, _]) => day)
-      });
-
-      // Usar o workSchedule parseado
-      updateData.workSchedule = parsedWorkSchedule;
     }
 
-    // Adicionar outros campos
+    // Validar formato da jornada
+    const validation = validateWorkSchedule(parsedWorkSchedule);
+    if (!validation.isValid) {
+      logger.warn('Validação de jornada falhou', {
+        employeeId: req.params.id,
+        errors: validation.errors
+      });
+      return res.status(400).json({ 
+        message: validation.errors.join('; ') 
+      });
+    }
+
+    logger.info('Jornada validada com sucesso', { 
+      employeeId: req.params.id,
+      daysConfigured: Object.entries(parsedWorkSchedule)
+        .filter(([_, day]) => day !== null && day !== undefined && typeof day === 'object' && day.startTime && day.endTime)
+        .map(([day, _]) => day)
+    });
+
+    // Converter objeto JSON para array de schedules
+    const schedulesArray = convertWorkScheduleObjectToArray(parsedWorkSchedule);
+    
+    logger.info('Convertendo jornada para array', {
+      employeeId: req.params.id,
+      schedulesCount: schedulesArray.length,
+      schedules: schedulesArray
+    });
+
+    // Criar/atualizar jornada na tabela normalizada
+    const createdSchedules = await createOrUpdateWorkSchedule(user.id, schedulesArray);
+
+    // Atualizar campos lunchBreakHours e lateTolerance no usuário
+    const updateData = {};
     if (lunchBreakHours !== undefined) updateData.lunchBreakHours = lunchBreakHours ? Number(lunchBreakHours) : null;
     if (lateTolerance !== undefined) updateData.lateTolerance = lateTolerance ? Number(lateTolerance) : 10;
 
-    logger.info('Dados para atualização', { 
-      employeeId: req.params.id,
-      updateData: {
-        hasWorkSchedule: !!updateData.workSchedule,
-        workScheduleType: typeof updateData.workSchedule,
-        workScheduleString: updateData.workSchedule ? JSON.stringify(updateData.workSchedule) : 'null',
-        workScheduleValue: updateData.workSchedule,
-        lunchBreakHours: updateData.lunchBreakHours,
-        lateTolerance: updateData.lateTolerance,
-        updateDataKeys: Object.keys(updateData)
-      }
-    });
+    if (Object.keys(updateData).length > 0) {
+      await updateUser(user.id, updateData);
+    }
 
-    // Verificar estado atual do usuário antes de atualizar
-    logger.info('Estado atual do usuário antes do update', {
-      employeeId: user.id,
-      hasWorkSchedule: !!user.workSchedule,
-      workScheduleType: typeof user.workSchedule,
-      workScheduleValue: user.workSchedule
-    });
+    // Buscar usuário atualizado com jornada
+    const updatedUser = await findUserById(user.id);
+    const updatedSchedules = await getWorkScheduleByEmployee(user.id, false);
+    
+    // Converter de volta para objeto JSON (para compatibilidade com frontend)
+    const workScheduleObject = parseWorkScheduleArray(updatedSchedules);
 
-    const updatedUser = await updateUser(user.id, updateData);
-    
-    // Verificar novamente do banco para confirmar que foi salvo
-    const verifiedUser = await findUserById(updatedUser.id);
-    
     logger.info(`Jornada ${isPost ? 'criada' : 'atualizada'} com sucesso`, { 
-      employeeId: updatedUser.id,
+      employeeId: user.id,
       method: req.method,
       action: isPost ? 'create' : 'update',
-      hasWorkSchedule: !!updatedUser.workSchedule,
-      workScheduleType: typeof updatedUser.workSchedule,
-      workScheduleString: updatedUser.workSchedule ? JSON.stringify(updatedUser.workSchedule) : 'null',
-      workSchedule: updatedUser.workSchedule
-    });
-
-    logger.info('Verificação pós-salvamento no banco', {
-      employeeId: verifiedUser?.id,
-      hasWorkSchedule: !!verifiedUser?.workSchedule,
-      workScheduleType: typeof verifiedUser?.workSchedule,
-      workScheduleString: verifiedUser?.workSchedule ? JSON.stringify(verifiedUser.workSchedule) : 'null',
-      workSchedule: verifiedUser?.workSchedule,
-      lunchBreakHours: verifiedUser?.lunchBreakHours,
-      lateTolerance: verifiedUser?.lateTolerance
+      schedulesCreated: createdSchedules.length,
+      workSchedule: workScheduleObject
     });
 
     // Registrar log de auditoria
     const requestMeta = getRequestMetadata(req);
     const action = isPost ? 'Criar' : 'Atualizar';
-    // Usando employee_created para ambos os casos até a migration ser aplicada
-    // TODO: Usar employee_work_schedule_updated quando a migration for aplicada
     await logAudit({
-      action: 'employee_created',
+      action: isPost ? 'employee_created' : 'employee_work_schedule_updated',
       entityType: 'employee',
-      entityId: updatedUser.id,
+      entityId: user.id,
       userId: req.user.id,
-      targetUserId: updatedUser.id,
+      targetUserId: user.id,
       description: `Jornada de trabalho ${isPost ? 'criada' : 'atualizada'} para ${updatedUser.name}`,
       metadata: {
         method: req.method,
         action,
-        workSchedule,
-        lunchBreakHours,
-        lateTolerance,
+        schedulesCount: createdSchedules.length,
+        workSchedule: workScheduleObject,
+        lunchBreakHours: updatedUser.lunchBreakHours,
+        lateTolerance: updatedUser.lateTolerance,
         hadExistingSchedule: hasExistingSchedule
       },
       ...requestMeta
     });
 
-    // Retornar os dados verificados do banco para garantir que está atualizado
-    const finalUser = verifiedUser || updatedUser;
-    
+    // Retornar formato compatível com frontend (objeto JSON)
     res.json({
-      id: finalUser.id,
-      name: finalUser.name,
-      email: finalUser.email,
-      department: finalUser.department,
-      role: finalUser.role,
-      overtimeLimit: finalUser.overtimeLimit,
-      overtimeExceptions: finalUser.overtimeExceptions || [],
-      workSchedule: finalUser.workSchedule,
-      lunchBreakHours: finalUser.lunchBreakHours,
-      lateTolerance: finalUser.lateTolerance
+      id: updatedUser.id,
+      name: updatedUser.name,
+      email: updatedUser.email,
+      department: updatedUser.department,
+      role: updatedUser.role,
+      overtimeLimit: updatedUser.overtimeLimit,
+      overtimeExceptions: updatedUser.overtimeExceptions || [],
+      workSchedule: workScheduleObject,
+      lunchBreakHours: updatedUser.lunchBreakHours,
+      lateTolerance: updatedUser.lateTolerance
     });
   } catch (error) {
-    logger.logError(error, { context: 'Atualizar jornada de trabalho', employeeId: req.params.id, userId: req.user?._id });
+    logger.logError(error, { context: 'Atualizar jornada de trabalho', employeeId: req.params.id, userId: req.user?.id });
     res.status(500).json({ message: 'Erro no servidor', error: error.message });
   }
 };
+
+// GET /api/employees/:id/work-schedule - Buscar jornada de trabalho (admin only)
+router.get('/:id/work-schedule', protect, admin, async (req, res) => {
+  try {
+    const user = await findUserById(req.params.id);
+    if (!user) {
+      return res.status(404).json({ message: 'Funcionário não encontrado' });
+    }
+
+    // Buscar jornada da tabela normalizada
+    const schedules = await getWorkScheduleByEmployee(user.id, false);
+    
+    // Converter para formato JSON (compatibilidade com frontend)
+    const workScheduleObject = parseWorkScheduleArray(schedules);
+
+    res.json({
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      workSchedule: workScheduleObject,
+      lunchBreakHours: user.lunchBreakHours,
+      lateTolerance: user.lateTolerance,
+      schedulesCount: schedules.length
+    });
+  } catch (error) {
+    logger.logError(error, { context: 'Buscar jornada de trabalho', employeeId: req.params.id, userId: req.user?.id });
+    res.status(500).json({ message: 'Erro no servidor', error: error.message });
+  }
+});
 
 // Criar ou atualizar jornada de trabalho (admin only)
 // POST para criar inicialmente, PATCH para atualizar

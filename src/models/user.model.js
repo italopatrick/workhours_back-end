@@ -84,7 +84,19 @@ export async function findUserById(id, includePassword = false) {
       externalAuth: true,
       overtimeLimit: true,
       overtimeExceptions: true,
-      workSchedule: true,
+      workSchedule: true, // Manter para backward compatibility durante migração
+      workSchedules: {
+        select: {
+          id: true,
+          dayOfWeek: true,
+          startTime: true,
+          endTime: true,
+          isActive: true
+        },
+        orderBy: {
+          dayOfWeek: 'asc'
+        }
+      },
       lunchBreakHours: true,
       lateTolerance: true,
       createdAt: true,
@@ -100,6 +112,7 @@ export async function findUserById(id, includePassword = false) {
       hasWorkSchedule: !!user.workSchedule,
       workScheduleType: typeof user.workSchedule,
       workScheduleValue: user.workSchedule,
+      workSchedulesCount: user.workSchedules?.length || 0,
       lunchBreakHours: user.lunchBreakHours,
       lateTolerance: user.lateTolerance
     });
@@ -161,26 +174,41 @@ export async function findUserByExternalId(externalId) {
  * @returns {Promise<Array>} Array of users
  */
 export async function findUsers(query = {}, options = {}) {
-  const { select, orderBy, skip, take } = options;
+  const { select, orderBy, skip, take, include } = options;
+
+  const selectFields = select || {
+    id: true,
+    email: true,
+    role: true,
+    name: true,
+    department: true,
+    externalId: true,
+    externalAuth: true,
+    overtimeLimit: true,
+    overtimeExceptions: true,
+    workSchedule: true, // Manter para backward compatibility durante migração
+    workSchedules: {
+      select: {
+        id: true,
+        dayOfWeek: true,
+        startTime: true,
+        endTime: true,
+        isActive: true
+      },
+      orderBy: {
+        dayOfWeek: 'asc'
+      }
+    },
+    lunchBreakHours: true,
+    lateTolerance: true,
+    createdAt: true,
+    updatedAt: true
+  };
 
   const users = await prisma.user.findMany({
     where: query,
-    select: select || {
-      id: true,
-      email: true,
-      role: true,
-      name: true,
-      department: true,
-      externalId: true,
-      externalAuth: true,
-      overtimeLimit: true,
-      overtimeExceptions: true,
-      workSchedule: true,
-      lunchBreakHours: true,
-      lateTolerance: true,
-      createdAt: true,
-      updatedAt: true
-    },
+    select: include ? undefined : selectFields,
+    include: include,
     orderBy: orderBy || { name: 'asc' },
     skip,
     take

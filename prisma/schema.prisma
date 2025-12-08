@@ -93,11 +93,30 @@ model User {
   approvedHourBankRecords HourBankRecord[] @relation("ApprovedByHourBank")
   rejectedHourBankRecords HourBankRecord[] @relation("RejectedByHourBank")
   timeClockRecords TimeClock[]
+  workSchedules    WorkSchedule[]
 
   @@index([email])
   @@index([role])
   @@index([externalId])
   @@map("users")
+}
+
+model WorkSchedule {
+  id          String   @id @default(uuid())
+  employeeId  String
+  dayOfWeek   String   // 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'
+  startTime   String   // '08:00' (formato HH:mm)
+  endTime     String   // '18:00' (formato HH:mm)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  employee    User     @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@unique([employeeId, dayOfWeek])
+  @@index([employeeId])
+  @@index([dayOfWeek])
+  @@map("work_schedules")
 }
 
 model Overtime {
