@@ -9,6 +9,7 @@ import settingsRoutes from './routes/settings.routes.js';
 import hourBankRoutes from './routes/hourBank.routes.js';
 import auditRoutes from './routes/audit.routes.js';
 import justificationRoutes from './routes/justification.routes.js';
+import timeclockRoutes from './routes/timeclock.routes.js';
 import logger from './utils/logger.js';
 import { requestLogger } from './middleware/requestLogger.js';
 import { connectDB, disconnectDB } from './config/database.js';
@@ -126,6 +127,7 @@ app.use('/api/settings', settingsRoutes);
 app.use('/api/hour-bank', hourBankRoutes);
 app.use('/api/audit', auditRoutes);
 app.use('/api/justifications', justificationRoutes);
+app.use('/api/timeclock', timeclockRoutes);
 
 const PORT = process.env.PORT || 5000;
 const HOST = process.env.HOST || '0.0.0.0';
