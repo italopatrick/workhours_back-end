@@ -5,8 +5,108 @@ import prisma from '../config/database.js';
 import { findUserById } from '../models/user.model.js';
 import { logAudit, getRequestMetadata } from '../middleware/audit.js';
 import logger from '../utils/logger.js';
+import { formatDateForDisplay } from '../utils/dateFormatter.js';
 
 const router = express.Router();
+
+// Helper: Criar débito automático no banco de horas quando há horas negativas
+const createAutomaticDebit = async (employeeId, date, negativeHours, timeClockId, userId, justification = null) => {
+  try {
+    // Verificar se já existe débito para este registro de ponto
+    const existingDebit = await prisma.hourBankRecord.findFirst({
+      where: {
+        employeeId,
+        date,
+        type: 'debit',
+        reason: {
+          contains: `Registro de ponto ${date}`
+        }
+      }
+    });
+
+    if (existingDebit) {
+      logger.info('Débito já existe para este registro de ponto', { timeClockId, existingDebitId: existingDebit.id });
+      return existingDebit;
+    }
+
+    // Verificar saldo disponível (mas não bloquear se não houver saldo - o débito será criado mesmo assim)
+    const allRecords = await prisma.hourBankRecord.findMany({
+      where: { employeeId }
+    });
+
+    let totalBalance = 0;
+    allRecords.forEach(record => {
+      if (record.status === 'approved') {
+        if (record.type === 'credit') {
+          totalBalance += record.hours;
+        } else {
+          totalBalance -= record.hours;
+        }
+      }
+    });
+
+    // Criar débito no banco de horas automaticamente
+    const reasonText = justification 
+      ? `Horas não trabalhadas em ${formatDateForDisplay(date)} - ${justification}`
+      : `Horas não trabalhadas em ${formatDateForDisplay(date)} (via registro de ponto)`;
+
+    const hourBankDebit = await prisma.hourBankRecord.create({
+      data: {
+        employeeId,
+        date,
+        type: 'debit',
+        hours: negativeHours,
+        reason: reasonText,
+        status: 'approved', // Aprovado automaticamente quando criado via registro de ponto
+        createdBy: userId,
+        approvedBy: userId,
+        approvedAt: new Date()
+      }
+    });
+
+    // Atualizar o registro de ponto com o ID do débito
+    await prisma.timeClock.update({
+      where: { id: timeClockId },
+      data: { hourBankDebitId: hourBankDebit.id }
+    });
+
+    // Registrar log de auditoria
+    await logAudit({
+      action: 'hourbank_debit_created',
+      entityType: 'hourbank',
+      entityId: hourBankDebit.id,
+      userId: userId,
+      targetUserId: employeeId,
+      description: `Débito no banco de horas criado automaticamente via registro de ponto: ${negativeHours}h em ${formatDateForDisplay(date)}`,
+      metadata: {
+        hours: negativeHours,
+        date: date,
+        type: 'debit',
+        timeClockId: timeClockId,
+        autoCreated: true,
+        justification: justification
+      }
+    });
+
+    logger.info('Débito no banco de horas criado automaticamente', { 
+      timeClockId, 
+      employeeId, 
+      negativeHours,
+      hourBankDebitId: hourBankDebit.id 
+    });
+
+    return hourBankDebit;
+  } catch (error) {
+    logger.logError(error, { 
+      context: 'Criar débito automático no banco de horas',
+      employeeId,
+      date,
+      negativeHours
+    });
+    // Não lançar erro - apenas logar, para não quebrar o fluxo de registro de ponto
+    return null;
+  }
+};
 
 // Helper: Calcular horas trabalhadas
 const calculateWorkedHours = (entryTime, exitTime, lunchExitTime, lunchReturnTime, lunchBreakHours = 0) => {
@@ -356,8 +456,79 @@ router.post('/clock-out', protect, async (req, res) => {
             record: updatedRecord
           });
         }
+        
+        // Se não há justificativas configuradas, criar débito automaticamente
+        await createAutomaticDebit(
+          employeeId,
+          today,
+          negativeHours,
+          updatedRecord.id,
+          req.user.id
+        );
       } catch (error) {
-        logger.warn('Erro ao buscar justificativas', { error: error.message });
+        logger.warn('Erro ao buscar justificativas ou criar débito', { error: error.message });
+      }
+    }
+    
+    // Se houver horas extras, criar crédito automaticamente
+    if (overtimeHours > 0) {
+      try {
+        // Verificar se já existe crédito para este registro
+        const existingCredit = await prisma.hourBankRecord.findFirst({
+          where: {
+            employeeId,
+            date: today,
+            type: 'credit',
+            reason: {
+              contains: `Registro de ponto ${today}`
+            }
+          }
+        });
+
+        if (!existingCredit) {
+          const hourBankCredit = await prisma.hourBankRecord.create({
+            data: {
+              employeeId,
+              date: today,
+              type: 'credit',
+              hours: overtimeHours,
+              reason: `Horas extras trabalhadas em ${formatDateForDisplay(today)} (via registro de ponto)`,
+              status: 'approved',
+              createdBy: req.user.id,
+              approvedBy: req.user.id,
+              approvedAt: new Date()
+            }
+          });
+
+          await prisma.timeClock.update({
+            where: { id: updatedRecord.id },
+            data: { hourBankCreditId: hourBankCredit.id }
+          });
+
+          await logAudit({
+            action: 'hourbank_credit_created',
+            entityType: 'hourbank',
+            entityId: hourBankCredit.id,
+            userId: req.user.id,
+            targetUserId: employeeId,
+            description: `Crédito no banco de horas criado automaticamente via registro de ponto: ${overtimeHours}h em ${formatDateForDisplay(today)}`,
+            metadata: {
+              hours: overtimeHours,
+              date: today,
+              type: 'credit',
+              timeClockId: updatedRecord.id,
+              autoCreated: true
+            }
+          });
+
+          logger.info('Crédito no banco de horas criado automaticamente', { 
+            timeClockId: updatedRecord.id, 
+            employeeId, 
+            overtimeHours 
+          });
+        }
+      } catch (error) {
+        logger.warn('Erro ao criar crédito automático', { error: error.message });
       }
     }
     
@@ -729,6 +900,73 @@ router.patch('/records/:recordId', protect, adminOrManager, async (req, res) => 
       }
     });
     
+    // Se houver horas negativas após a edição, criar/atualizar débito
+    if (updatedRecord.negativeHours && updatedRecord.negativeHours > 0) {
+      await createAutomaticDebit(
+        record.employeeId,
+        record.date,
+        updatedRecord.negativeHours,
+        updatedRecord.id,
+        req.user.id,
+        updatedRecord.justification || null
+      );
+    }
+    
+    // Se houver horas extras após a edição, criar/atualizar crédito
+    if (updatedRecord.overtimeHours && updatedRecord.overtimeHours > 0) {
+      try {
+        const existingCredit = await prisma.hourBankRecord.findFirst({
+          where: {
+            employeeId: record.employeeId,
+            date: record.date,
+            type: 'credit',
+            reason: {
+              contains: `Registro de ponto ${record.date}`
+            }
+          }
+        });
+
+        if (!existingCredit) {
+          const hourBankCredit = await prisma.hourBankRecord.create({
+            data: {
+              employeeId: record.employeeId,
+              date: record.date,
+              type: 'credit',
+              hours: updatedRecord.overtimeHours,
+              reason: `Horas extras trabalhadas em ${formatDateForDisplay(record.date)} (via registro de ponto)`,
+              status: 'approved',
+              createdBy: req.user.id,
+              approvedBy: req.user.id,
+              approvedAt: new Date()
+            }
+          });
+
+          await prisma.timeClock.update({
+            where: { id: updatedRecord.id },
+            data: { hourBankCreditId: hourBankCredit.id }
+          });
+
+          await logAudit({
+            action: 'hourbank_credit_created',
+            entityType: 'hourbank',
+            entityId: hourBankCredit.id,
+            userId: req.user.id,
+            targetUserId: record.employeeId,
+            description: `Crédito no banco de horas criado automaticamente via edição de registro de ponto: ${updatedRecord.overtimeHours}h em ${formatDateForDisplay(record.date)}`,
+            metadata: {
+              hours: updatedRecord.overtimeHours,
+              date: record.date,
+              type: 'credit',
+              timeClockId: updatedRecord.id,
+              autoCreated: true
+            }
+          });
+        }
+      } catch (error) {
+        logger.warn('Erro ao criar crédito automático na edição', { error: error.message });
+      }
+    }
+    
     // Registrar log de auditoria
     const requestMeta = getRequestMetadata(req);
     await logAudit({
@@ -928,6 +1166,73 @@ router.post('/clock-out-with-justification', protect, async (req, res) => {
       where: { id: record.id },
       data: updateData
     });
+    
+    // Se houver horas negativas, criar débito automaticamente (mesmo com justificativa)
+    if (negativeHours > 0) {
+      await createAutomaticDebit(
+        employeeId,
+        today,
+        negativeHours,
+        updatedRecord.id,
+        req.user.id,
+        justification.reason
+      );
+    }
+    
+    // Se houver horas extras, criar crédito automaticamente
+    if (overtimeHours > 0) {
+      try {
+        const existingCredit = await prisma.hourBankRecord.findFirst({
+          where: {
+            employeeId,
+            date: today,
+            type: 'credit',
+            reason: {
+              contains: `Registro de ponto ${today}`
+            }
+          }
+        });
+
+        if (!existingCredit) {
+          const hourBankCredit = await prisma.hourBankRecord.create({
+            data: {
+              employeeId,
+              date: today,
+              type: 'credit',
+              hours: overtimeHours,
+              reason: `Horas extras trabalhadas em ${formatDateForDisplay(today)} (via registro de ponto)`,
+              status: 'approved',
+              createdBy: req.user.id,
+              approvedBy: req.user.id,
+              approvedAt: new Date()
+            }
+          });
+
+          await prisma.timeClock.update({
+            where: { id: updatedRecord.id },
+            data: { hourBankCreditId: hourBankCredit.id }
+          });
+
+          await logAudit({
+            action: 'hourbank_credit_created',
+            entityType: 'hourbank',
+            entityId: hourBankCredit.id,
+            userId: req.user.id,
+            targetUserId: employeeId,
+            description: `Crédito no banco de horas criado automaticamente via registro de ponto: ${overtimeHours}h em ${formatDateForDisplay(today)}`,
+            metadata: {
+              hours: overtimeHours,
+              date: today,
+              type: 'credit',
+              timeClockId: updatedRecord.id,
+              autoCreated: true
+            }
+          });
+        }
+      } catch (error) {
+        logger.warn('Erro ao criar crédito automático', { error: error.message });
+      }
+    }
     
     // Registrar log de auditoria
     const requestMeta = getRequestMetadata(req);
