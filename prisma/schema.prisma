@@ -284,6 +284,6 @@ model Justification {
   timeClockRecords TimeClock[]
 
   @@index([isActive])
-  @@map("justifications")
+  @@map("time_clock_justifications")
 }
 
