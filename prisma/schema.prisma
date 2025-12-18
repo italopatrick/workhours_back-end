@@ -12,6 +12,7 @@ datasource db {
 
 enum UserRole {
   admin
+  manager
   employee
 }
 
@@ -51,10 +52,15 @@ enum AuditAction {
   settings_updated
   settings_logo_updated
   timeclock_entry
+  timeclock_exit
   timeclock_lunch_exit
   timeclock_lunch_return
-  timeclock_exit
+  timeclock_entry_with_justification
+  timeclock_exit_with_justification
   timeclock_edited
+  justification_created
+  justification_updated
+  justification_deactivated
 }
 
 enum EntityType {
@@ -99,6 +105,7 @@ model User {
   @@index([email])
   @@index([role])
   @@index([externalId])
+  @@index([department])
   @@map("users")
 }
 
@@ -231,7 +238,7 @@ model TimeClock {
   negativeHours     Float?    // Horas negativas (se saiu antes)
   hourBankCreditId  String?   // ID do crédito criado (se houver hora extra)
   hourBankDebitId   String?   // ID do débito criado (se houver abatimento)
-  justification     String?   // Justificativa para atraso ou horas não cumpridas (texto livre ou motivo da TimeClockJustification)
+  justification     String?   // Justificativa para atraso ou horas não cumpridas (texto livre ou motivo da Justification)
   justificationId   String?   // ID da justificativa pré-definida (opcional)
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
@@ -240,7 +247,7 @@ model TimeClock {
   employee          User      @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   hourBankCredit    HourBankRecord? @relation("TimeClockCredit", fields: [hourBankCreditId], references: [id])
   hourBankDebit     HourBankRecord? @relation("TimeClockDebit", fields: [hourBankDebitId], references: [id])
-  justificationReason TimeClockJustification? @relation(fields: [justificationId], references: [id], onDelete: SetNull)
+  justificationReason Justification? @relation(fields: [justificationId], references: [id], onDelete: SetNull)
 
   @@unique([employeeId, date])
   @@index([employeeId])
@@ -266,9 +273,9 @@ model CompanySettings {
   @@map("company_settings")
 }
 
-model TimeClockJustification {
+model Justification {
   id          String   @id @default(uuid())
-  reason      String   @unique // Ex: "Trânsito", "Problemas pessoais", etc.
+  reason      String
   isActive    Boolean  @default(true)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -276,6 +283,7 @@ model TimeClockJustification {
   // Relations
   timeClockRecords TimeClock[]
 
-  @@map("time_clock_justifications")
+  @@index([isActive])
+  @@map("justifications")
 }
 

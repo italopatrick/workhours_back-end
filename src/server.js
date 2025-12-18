@@ -8,7 +8,6 @@ import reportRoutes from './routes/report.routes.js';
 import settingsRoutes from './routes/settings.routes.js';
 import hourBankRoutes from './routes/hourBank.routes.js';
 import auditRoutes from './routes/audit.routes.js';
-import timeClockRoutes from './routes/timeClock.routes.js';
 import justificationRoutes from './routes/justification.routes.js';
 import logger from './utils/logger.js';
 import { requestLogger } from './middleware/requestLogger.js';
@@ -126,7 +125,6 @@ app.use('/api/reports', reportRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/hour-bank', hourBankRoutes);
 app.use('/api/audit', auditRoutes);
-app.use('/api/timeclock', timeClockRoutes);
 app.use('/api/justifications', justificationRoutes);
 
 const PORT = process.env.PORT || 5000;

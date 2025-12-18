@@ -23,9 +23,32 @@ const router = express.Router();
 // Get all employees (authenticated users)
 router.get('/', protect, async (req, res) => {
   try {
-    // Se for admin, retorna todos os funcionários
-    // Se for funcionário normal, retorna apenas funcionários ativos (não admin)
-    const query = req.user.role === 'admin' ? {} : { role: { not: 'admin' } };
+    const { department } = req.query;
+    
+    // Construir query baseado na role
+    let query = {};
+    
+    if (req.user.role === 'admin') {
+      // Admin vê todos, mas pode filtrar por departamento se fornecido
+      if (department) {
+        query.department = department;
+      }
+    } else if (req.user.role === 'manager') {
+      // Manager só vê funcionários do seu departamento
+      query.department = req.user.department;
+      
+      // Se forneceu department diferente, ignorar (manager só vê seu departamento)
+      if (department && department !== req.user.department) {
+        logger.warn('Manager tentando filtrar por outro departamento', {
+          userId: req.user.id,
+          userDepartment: req.user.department,
+          requestedDepartment: department
+        });
+      }
+    } else {
+      // Employee não vê outros funcionários (ou retorna apenas não-admin)
+      query.role = { not: 'admin' };
+    }
     
       const employees = await findUsers(query, {
         orderBy: { name: 'asc' }
@@ -376,8 +399,8 @@ router.patch('/:id/role', protect, admin, async (req, res) => {
   try {
     const { role } = req.body;
     
-    if (!role || !['admin', 'employee'].includes(role)) {
-      return res.status(400).json({ message: 'Role inválida. Use "admin" ou "employee"' });
+    if (!role || !['admin', 'manager', 'employee'].includes(role)) {
+      return res.status(400).json({ message: 'Role inválida. Use "admin", "manager" ou "employee"' });
     }
 
     const user = await findUserById(req.params.id);

@@ -1,196 +1,148 @@
 import express from 'express';
-import { protect, admin } from '../middleware/auth.js';
+import { protect, adminOrManager } from '../middleware/auth.js';
 import prisma from '../config/database.js';
 import { logAudit, getRequestMetadata } from '../middleware/audit.js';
 import logger from '../utils/logger.js';
 
 const router = express.Router();
 
-// GET /api/justifications - Listar justificativas ativas
+// GET /justifications - Listar justificativas ativas
 router.get('/', protect, async (req, res) => {
   try {
-    const justifications = await prisma.timeClockJustification.findMany({
-      where: {
-        isActive: true
-      },
-      orderBy: {
-        reason: 'asc'
-      }
+    const justifications = await prisma.justification.findMany({
+      where: { isActive: true },
+      orderBy: { reason: 'asc' }
     });
-
+    
     res.json(justifications);
   } catch (error) {
-    logger.logError(error, { context: 'Listar justificativas' });
-    res.status(500).json({ error: 'Erro ao listar justificativas' });
+    logger.logError(error, { context: 'Buscar justificativas', userId: req.user?.id });
+    res.status(500).json({ message: 'Erro ao buscar justificativas', error: error.message });
   }
 });
 
-// POST /api/justifications - Criar nova justificativa (admin)
-router.post('/', protect, admin, async (req, res) => {
+// POST /justifications - Criar justificativa (admin ou manager)
+router.post('/', protect, adminOrManager, async (req, res) => {
   try {
     const { reason } = req.body;
-
-    if (!reason || typeof reason !== 'string' || reason.trim().length === 0) {
-      return res.status(400).json({ error: 'Motivo da justificativa é obrigatório' });
+    
+    if (!reason || !reason.trim()) {
+      return res.status(400).json({ error: 'O motivo da justificativa é obrigatório' });
     }
-
-    // Verificar se já existe justificativa com o mesmo motivo
-    const existing = await prisma.timeClockJustification.findUnique({
-      where: { reason: reason.trim() }
-    });
-
-    if (existing) {
-      return res.status(400).json({ error: 'Já existe uma justificativa com este motivo' });
-    }
-
-    const justification = await prisma.timeClockJustification.create({
+    
+    const justification = await prisma.justification.create({
       data: {
         reason: reason.trim(),
         isActive: true
       }
     });
-
-    // Log de auditoria
-    const metadata = getRequestMetadata(req);
+    
+    // Registrar log de auditoria
+    const requestMeta = getRequestMetadata(req);
     await logAudit({
-      action: 'settings_updated', // Usar action existente, pode criar uma específica depois
+      action: 'justification_created',
       entityType: 'settings',
       entityId: justification.id,
       userId: req.user.id,
-      description: `Justificativa criada: ${justification.reason}`,
+      description: `Justificativa criada: ${reason.trim()}`,
+      metadata: {
+        reason: reason.trim()
+      },
+      ...requestMeta
+    });
+    
+    res.status(201).json(justification);
+  } catch (error) {
+    logger.logError(error, { context: 'Criar justificativa', userId: req.user?.id });
+    res.status(500).json({ message: 'Erro ao criar justificativa', error: error.message });
+  }
+});
+
+// PATCH /justifications/:id - Atualizar justificativa (admin ou manager)
+router.patch('/:id', protect, adminOrManager, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { reason } = req.body;
+    
+    if (!reason || !reason.trim()) {
+      return res.status(400).json({ error: 'O motivo da justificativa é obrigatório' });
+    }
+    
+    const justification = await prisma.justification.findUnique({
+      where: { id }
+    });
+    
+    if (!justification) {
+      return res.status(404).json({ error: 'Justificativa não encontrada' });
+    }
+    
+    const updatedJustification = await prisma.justification.update({
+      where: { id },
+      data: {
+        reason: reason.trim()
+      }
+    });
+    
+    // Registrar log de auditoria
+    const requestMeta = getRequestMetadata(req);
+    await logAudit({
+      action: 'justification_updated',
+      entityType: 'settings',
+      entityId: updatedJustification.id,
+      userId: req.user.id,
+      description: `Justificativa atualizada: ${reason.trim()}`,
+      metadata: {
+        oldReason: justification.reason,
+        newReason: reason.trim()
+      },
+      ...requestMeta
+    });
+    
+    res.json(updatedJustification);
+  } catch (error) {
+    logger.logError(error, { context: 'Atualizar justificativa', justificationId: req.params.id, userId: req.user?.id });
+    res.status(500).json({ message: 'Erro ao atualizar justificativa', error: error.message });
+  }
+});
+
+// DELETE /justifications/:id - Desativar justificativa (admin ou manager)
+router.delete('/:id', protect, adminOrManager, async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const justification = await prisma.justification.findUnique({
+      where: { id }
+    });
+    
+    if (!justification) {
+      return res.status(404).json({ error: 'Justificativa não encontrada' });
+    }
+    
+    const updatedJustification = await prisma.justification.update({
+      where: { id },
+      data: {
+        isActive: false
+      }
+    });
+    
+    // Registrar log de auditoria
+    const requestMeta = getRequestMetadata(req);
+    await logAudit({
+      action: 'justification_deactivated',
+      entityType: 'settings',
+      entityId: updatedJustification.id,
+      userId: req.user.id,
+      description: `Justificativa desativada: ${justification.reason}`,
       metadata: {
         reason: justification.reason
       },
-      ...metadata
+      ...requestMeta
     });
-
-    logger.info('Justificativa criada', {
-      id: justification.id,
-      reason: justification.reason,
-      userId: req.user.id
-    });
-
-    res.status(201).json(justification);
+    
+    res.json({ message: 'Justificativa desativada com sucesso', justification: updatedJustification });
   } catch (error) {
-    logger.logError(error, { context: 'Criar justificativa' });
-    res.status(500).json({ error: 'Erro ao criar justificativa' });
-  }
-});
-
-// PATCH /api/justifications/:id - Atualizar justificativa (admin)
-router.patch('/:id', protect, admin, async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { reason, isActive } = req.body;
-
-    const existing = await prisma.timeClockJustification.findUnique({
-      where: { id }
-    });
-
-    if (!existing) {
-      return res.status(404).json({ error: 'Justificativa não encontrada' });
-    }
-
-    const updateData = {};
-
-    if (reason !== undefined) {
-      if (typeof reason !== 'string' || reason.trim().length === 0) {
-        return res.status(400).json({ error: 'Motivo da justificativa é obrigatório' });
-      }
-
-      // Verificar se já existe outra justificativa com o mesmo motivo
-      const duplicate = await prisma.timeClockJustification.findUnique({
-        where: { reason: reason.trim() }
-      });
-
-      if (duplicate && duplicate.id !== id) {
-        return res.status(400).json({ error: 'Já existe outra justificativa com este motivo' });
-      }
-
-      updateData.reason = reason.trim();
-    }
-
-    if (isActive !== undefined) {
-      updateData.isActive = Boolean(isActive);
-    }
-
-    const updated = await prisma.timeClockJustification.update({
-      where: { id },
-      data: updateData
-    });
-
-    // Log de auditoria
-    const metadata = getRequestMetadata(req);
-    await logAudit({
-      action: 'settings_updated',
-      entityType: 'settings',
-      entityId: id,
-      userId: req.user.id,
-      description: `Justificativa atualizada: ${updated.reason}`,
-      metadata: {
-        reason: updated.reason,
-        isActive: updated.isActive
-      },
-      ...metadata
-    });
-
-    logger.info('Justificativa atualizada', {
-      id: updated.id,
-      reason: updated.reason,
-      isActive: updated.isActive,
-      userId: req.user.id
-    });
-
-    res.json(updated);
-  } catch (error) {
-    logger.logError(error, { context: 'Atualizar justificativa' });
-    res.status(500).json({ error: 'Erro ao atualizar justificativa' });
-  }
-});
-
-// DELETE /api/justifications/:id - Desativar justificativa (admin)
-router.delete('/:id', protect, admin, async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    const existing = await prisma.timeClockJustification.findUnique({
-      where: { id }
-    });
-
-    if (!existing) {
-      return res.status(404).json({ error: 'Justificativa não encontrada' });
-    }
-
-    // Desativar em vez de deletar (soft delete)
-    const updated = await prisma.timeClockJustification.update({
-      where: { id },
-      data: { isActive: false }
-    });
-
-    // Log de auditoria
-    const metadata = getRequestMetadata(req);
-    await logAudit({
-      action: 'settings_updated',
-      entityType: 'settings',
-      entityId: id,
-      userId: req.user.id,
-      description: `Justificativa desativada: ${updated.reason}`,
-      metadata: {
-        reason: updated.reason
-      },
-      ...metadata
-    });
-
-    logger.info('Justificativa desativada', {
-      id: updated.id,
-      reason: updated.reason,
-      userId: req.user.id
-    });
-
-    res.json(updated);
-  } catch (error) {
-    logger.logError(error, { context: 'Desativar justificativa' });
-    res.status(500).json({ error: 'Erro ao desativar justificativa' });
+    logger.logError(error, { context: 'Desativar justificativa', justificationId: req.params.id, userId: req.user?.id });
+    res.status(500).json({ message: 'Erro ao desativar justificativa', error: error.message });
   }
 });
 
