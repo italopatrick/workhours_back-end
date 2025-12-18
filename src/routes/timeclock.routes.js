@@ -57,10 +57,8 @@ const createAutomaticDebit = async (employeeId, date, negativeHours, timeClockId
         type: 'debit',
         hours: negativeHours,
         reason: reasonText,
-        status: 'approved', // Aprovado automaticamente quando criado via registro de ponto
-        createdBy: userId,
-        approvedBy: userId,
-        approvedAt: new Date()
+        status: 'pending', // Pendente para aprovação manual pelo admin/manager
+        createdBy: userId
       }
     });
 
@@ -493,10 +491,8 @@ router.post('/clock-out', protect, async (req, res) => {
               type: 'credit',
               hours: overtimeHours,
               reason: `Horas extras trabalhadas em ${formatDateForDisplay(today)} (via registro de ponto)`,
-              status: 'approved',
-              createdBy: req.user.id,
-              approvedBy: req.user.id,
-              approvedAt: new Date()
+              status: 'pending', // Pendente para aprovação manual pelo admin/manager
+              createdBy: req.user.id
             }
           });
 
@@ -1201,10 +1197,8 @@ router.post('/clock-out-with-justification', protect, async (req, res) => {
               type: 'credit',
               hours: overtimeHours,
               reason: `Horas extras trabalhadas em ${formatDateForDisplay(today)} (via registro de ponto)`,
-              status: 'approved',
-              createdBy: req.user.id,
-              approvedBy: req.user.id,
-              approvedAt: new Date()
+              status: 'pending', // Pendente para aprovação manual pelo admin/manager
+              createdBy: req.user.id
             }
           });
 
