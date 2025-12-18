@@ -752,5 +752,210 @@ router.patch('/records/:recordId', protect, adminOrManager, async (req, res) => 
   }
 });
 
+// POST /timeclock/clock-in-with-justification - Registrar entrada com justificativa
+router.post('/clock-in-with-justification', protect, async (req, res) => {
+  try {
+    const { justificationId, entryTime } = req.body;
+    const employeeId = req.user.id;
+    const today = entryTime ? new Date(entryTime).toISOString().split('T')[0] : new Date().toISOString().split('T')[0];
+    
+    if (!justificationId) {
+      return res.status(400).json({ error: 'Justificativa é obrigatória' });
+    }
+    
+    // Verificar se justificativa existe e está ativa
+    const justification = await prisma.justification.findUnique({
+      where: { id: justificationId }
+    });
+    
+    if (!justification || !justification.isActive) {
+      return res.status(404).json({ error: 'Justificativa não encontrada ou inativa' });
+    }
+    
+    // Verificar se já existe registro para hoje
+    let record = await prisma.timeClock.findFirst({
+      where: {
+        employeeId,
+        date: today
+      }
+    });
+    
+    const entryDateTime = entryTime ? new Date(entryTime) : new Date();
+    
+    // Se não existe, criar novo registro
+    if (!record) {
+      record = await prisma.timeClock.create({
+        data: {
+          employeeId,
+          date: today,
+          entryTime: entryDateTime,
+          justificationId,
+          justification: justification.reason
+        }
+      });
+    } else {
+      // Atualizar registro existente
+      record = await prisma.timeClock.update({
+        where: { id: record.id },
+        data: {
+          entryTime: entryDateTime,
+          justificationId,
+          justification: justification.reason
+        }
+      });
+    }
+    
+    // Buscar dados do funcionário para calcular atraso
+    const employee = await findUserById(employeeId);
+    if (employee && employee.workSchedule) {
+      const lateMinutes = calculateLateMinutes(
+        record.entryTime,
+        employee.workSchedule,
+        today,
+        employee.lateTolerance || 0
+      );
+      
+      // Atualizar atraso no registro
+      if (lateMinutes > 0) {
+        record = await prisma.timeClock.update({
+          where: { id: record.id },
+          data: { lateMinutes: Math.round(lateMinutes) }
+        });
+      }
+    }
+    
+    // Registrar log de auditoria
+    const requestMeta = getRequestMetadata(req);
+    await logAudit({
+      action: 'timeclock_entry_with_justification',
+      entityType: 'timeclock',
+      entityId: record.id,
+      userId: req.user.id,
+      targetUserId: employeeId,
+      description: `Entrada registrada com justificativa: ${justification.reason}`,
+      metadata: {
+        date: today,
+        entryTime: record.entryTime,
+        justificationId,
+        justification: justification.reason
+      },
+      ...requestMeta
+    });
+    
+    res.json(record);
+  } catch (error) {
+    logger.logError(error, { context: 'Registrar entrada com justificativa', userId: req.user?.id });
+    res.status(500).json({ message: 'Erro ao registrar entrada com justificativa', error: error.message });
+  }
+});
+
+// POST /timeclock/clock-out-with-justification - Registrar saída com justificativa
+router.post('/clock-out-with-justification', protect, async (req, res) => {
+  try {
+    const { justificationId, exitTime } = req.body;
+    const employeeId = req.user.id;
+    const today = exitTime ? new Date(exitTime).toISOString().split('T')[0] : new Date().toISOString().split('T')[0];
+    
+    if (!justificationId) {
+      return res.status(400).json({ error: 'Justificativa é obrigatória' });
+    }
+    
+    // Verificar se justificativa existe e está ativa
+    const justification = await prisma.justification.findUnique({
+      where: { id: justificationId }
+    });
+    
+    if (!justification || !justification.isActive) {
+      return res.status(404).json({ error: 'Justificativa não encontrada ou inativa' });
+    }
+    
+    const record = await prisma.timeClock.findFirst({
+      where: {
+        employeeId,
+        date: today
+      }
+    });
+    
+    if (!record) {
+      return res.status(404).json({ error: 'Registro não encontrado. Registre a entrada primeiro.' });
+    }
+    
+    if (!record.entryTime) {
+      return res.status(400).json({ error: 'Entrada não registrada' });
+    }
+    
+    if (record.exitTime) {
+      return res.status(400).json({ error: 'Saída já registrada' });
+    }
+    
+    const exitDateTime = exitTime ? new Date(exitTime) : new Date();
+    
+    // Buscar dados do funcionário
+    const employee = await findUserById(employeeId);
+    const lunchBreakHours = employee?.lunchBreakHours || 0;
+    
+    // Calcular horas trabalhadas
+    const totalWorkedHours = calculateWorkedHours(
+      record.entryTime,
+      exitDateTime,
+      record.lunchExitTime,
+      record.lunchReturnTime,
+      lunchBreakHours
+    );
+    
+    // Calcular horas agendadas
+    const scheduledHours = employee?.workSchedule 
+      ? calculateScheduledHours(employee.workSchedule, today, lunchBreakHours)
+      : 0;
+    
+    // Calcular horas negativas
+    const negativeHours = scheduledHours > 0 ? Math.max(0, scheduledHours - totalWorkedHours) : 0;
+    
+    // Calcular horas extras
+    const overtimeHours = totalWorkedHours > scheduledHours ? totalWorkedHours - scheduledHours : 0;
+    
+    const updateData = {
+      exitTime: exitDateTime,
+      totalWorkedHours,
+      scheduledHours,
+      overtimeHours: overtimeHours > 0 ? overtimeHours : null,
+      negativeHours: negativeHours > 0 ? negativeHours : null,
+      justificationId,
+      justification: justification.reason
+    };
+    
+    const updatedRecord = await prisma.timeClock.update({
+      where: { id: record.id },
+      data: updateData
+    });
+    
+    // Registrar log de auditoria
+    const requestMeta = getRequestMetadata(req);
+    await logAudit({
+      action: 'timeclock_exit_with_justification',
+      entityType: 'timeclock',
+      entityId: updatedRecord.id,
+      userId: req.user.id,
+      targetUserId: employeeId,
+      description: `Saída registrada com justificativa: ${justification.reason} - ${totalWorkedHours.toFixed(2)}h trabalhadas`,
+      metadata: {
+        date: today,
+        exitTime: exitDateTime,
+        totalWorkedHours,
+        negativeHours,
+        overtimeHours,
+        justificationId,
+        justification: justification.reason
+      },
+      ...requestMeta
+    });
+    
+    res.json(updatedRecord);
+  } catch (error) {
+    logger.logError(error, { context: 'Registrar saída com justificativa', userId: req.user?.id });
+    res.status(500).json({ message: 'Erro ao registrar saída com justificativa', error: error.message });
+  }
+});
+
 export default router;
 
