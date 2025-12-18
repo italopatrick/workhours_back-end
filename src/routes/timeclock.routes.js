@@ -75,12 +75,10 @@ router.post('/clock-in', protect, async (req, res) => {
     const today = new Date().toISOString().split('T')[0];
     
     // Verificar se já existe registro para hoje
-    let record = await prisma.timeClock.findUnique({
+    let record = await prisma.timeClock.findFirst({
       where: {
-        employeeId_date: {
-          employeeId,
-          date: today
-        }
+        employeeId,
+        date: today
       }
     });
     
@@ -175,12 +173,10 @@ router.post('/clock-out-lunch', protect, async (req, res) => {
     const employeeId = req.user.id;
     const today = new Date().toISOString().split('T')[0];
     
-    const record = await prisma.timeClock.findUnique({
+    const record = await prisma.timeClock.findFirst({
       where: {
-        employeeId_date: {
-          employeeId,
-          date: today
-        }
+        employeeId,
+        date: today
       }
     });
     
@@ -232,12 +228,10 @@ router.post('/clock-in-lunch', protect, async (req, res) => {
     const employeeId = req.user.id;
     const today = new Date().toISOString().split('T')[0];
     
-    const record = await prisma.timeClock.findUnique({
+    const record = await prisma.timeClock.findFirst({
       where: {
-        employeeId_date: {
-          employeeId,
-          date: today
-        }
+        employeeId,
+        date: today
       }
     });
     
@@ -289,12 +283,10 @@ router.post('/clock-out', protect, async (req, res) => {
     const employeeId = req.user.id;
     const today = new Date().toISOString().split('T')[0];
     
-    const record = await prisma.timeClock.findUnique({
+    const record = await prisma.timeClock.findFirst({
       where: {
-        employeeId_date: {
-          employeeId,
-          date: today
-        }
+        employeeId,
+        date: today
       }
     });
     
@@ -401,12 +393,10 @@ router.get('/today', protect, async (req, res) => {
     const employeeId = req.user.id;
     const today = new Date().toISOString().split('T')[0];
     
-    const record = await prisma.timeClock.findUnique({
+    const record = await prisma.timeClock.findFirst({
       where: {
-        employeeId_date: {
-          employeeId,
-          date: today
-        }
+        employeeId,
+        date: today
       },
       include: {
         employee: {
