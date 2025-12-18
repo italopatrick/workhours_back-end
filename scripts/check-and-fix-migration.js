@@ -132,7 +132,7 @@ async function checkAndFix() {
     // Testar criação de uma justificativa
     console.log('\n🧪 Testando criação de justificativa...');
     try {
-      const testJustification = await prisma.timeClockJustification.create({
+      const testJustification = await prisma.justification.create({
         data: {
           reason: 'TESTE - Pode ser deletada',
           isActive: false
@@ -143,12 +143,15 @@ async function checkAndFix() {
       console.log('   Motivo:', testJustification.reason);
       
       // Deletar justificativa de teste
-      await prisma.timeClockJustification.delete({
+      await prisma.justification.delete({
         where: { id: testJustification.id }
       });
       console.log('✅ Justificativa de teste removida.');
     } catch (testError) {
       console.error('❌ Erro ao testar criação:', testError.message);
+      if (testError.message.includes('Cannot read properties of undefined')) {
+        console.error('   💡 Dica: O Prisma Client precisa ser regenerado. Execute: npx prisma generate');
+      }
     }
     
   } catch (error) {
