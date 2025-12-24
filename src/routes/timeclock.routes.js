@@ -7,6 +7,7 @@ import { logAudit, getRequestMetadata } from '../middleware/audit.js';
 import logger from '../utils/logger.js';
 import { formatDateForDisplay } from '../utils/dateFormatter.js';
 import { parseWorkScheduleArray } from '../models/workSchedule.model.js';
+import { sendTimeClockEmail } from '../services/emailService.js';
 
 const router = express.Router();
 
@@ -312,6 +313,13 @@ router.post('/clock-in', protect, async (req, res) => {
       ...requestMeta
     });
     
+    // Enviar email de confirmação (não bloqueia o retorno em caso de erro)
+    if (employee) {
+      sendTimeClockEmail(employee, record, 'entry').catch(error => {
+        logger.warn('Erro ao enviar email de entrada', { error: error.message, employeeId: employee.id });
+      });
+    }
+    
     res.json(record);
   } catch (error) {
     logger.logError(error, { context: 'Registrar entrada', userId: req.user?.id });
@@ -366,6 +374,14 @@ router.post('/clock-out-lunch', protect, async (req, res) => {
       },
       ...requestMeta
     });
+    
+    // Enviar email de confirmação (não bloqueia o retorno em caso de erro)
+    const employee = await findUserById(employeeId);
+    if (employee) {
+      sendTimeClockEmail(employee, updatedRecord, 'lunch_exit').catch(error => {
+        logger.warn('Erro ao enviar email de saída para almoço', { error: error.message, employeeId: employee.id });
+      });
+    }
     
     res.json(updatedRecord);
   } catch (error) {
@@ -436,6 +452,13 @@ router.post('/clock-in-lunch', protect, async (req, res) => {
       },
       ...requestMeta
     });
+    
+    // Enviar email de confirmação (não bloqueia o retorno em caso de erro)
+    if (employee) {
+      sendTimeClockEmail(employee, updatedRecord, 'lunch_return').catch(error => {
+        logger.warn('Erro ao enviar email de volta do almoço', { error: error.message, employeeId: employee.id });
+      });
+    }
     
     res.json(updatedRecord);
   } catch (error) {
@@ -630,6 +653,13 @@ router.post('/clock-out', protect, async (req, res) => {
       },
       ...requestMeta
     });
+    
+    // Enviar email de confirmação (não bloqueia o retorno em caso de erro)
+    if (employee) {
+      sendTimeClockEmail(employee, updatedRecord, 'exit').catch(error => {
+        logger.warn('Erro ao enviar email de saída', { error: error.message, employeeId: employee.id });
+      });
+    }
     
     res.json(updatedRecord);
   } catch (error) {
@@ -1226,6 +1256,13 @@ router.post('/clock-in-with-justification', protect, async (req, res) => {
       ...requestMeta
     });
     
+    // Enviar email de confirmação (não bloqueia o retorno em caso de erro)
+    if (employee) {
+      sendTimeClockEmail(employee, record, 'entry').catch(error => {
+        logger.warn('Erro ao enviar email de entrada com justificativa', { error: error.message, employeeId: employee.id });
+      });
+    }
+    
     res.json(record);
   } catch (error) {
     logger.logError(error, { context: 'Registrar entrada com justificativa', userId: req.user?.id });
@@ -1423,6 +1460,13 @@ router.post('/clock-out-with-justification', protect, async (req, res) => {
       },
       ...requestMeta
     });
+    
+    // Enviar email de confirmação (não bloqueia o retorno em caso de erro)
+    if (employee) {
+      sendTimeClockEmail(employee, updatedRecord, 'exit').catch(error => {
+        logger.warn('Erro ao enviar email de saída com justificativa', { error: error.message, employeeId: employee.id });
+      });
+    }
     
     res.json(updatedRecord);
   } catch (error) {

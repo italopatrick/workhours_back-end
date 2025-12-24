@@ -126,13 +126,17 @@ export async function sendTimeClockEmail(employee, timeClockRecord, type) {
         const workedHours = timeClockRecord.totalWorkedHours?.toFixed(2) || '0.00';
         const overtimeHours = timeClockRecord.overtimeHours?.toFixed(2) || '0.00';
         const lateMinutes = timeClockRecord.lateMinutes || 0;
+        const lunchLateMinutes = timeClockRecord.lunchLateMinutes || 0;
         
         summary = `Você registrou sua saída às ${exitTime}.`;
         if (timeClockRecord.totalWorkedHours) {
           summary += `<br><br><strong>Horas trabalhadas:</strong> ${workedHours}h`;
         }
         if (lateMinutes > 0) {
-          summary += `<br><strong>Atraso:</strong> ${lateMinutes} minutos`;
+          summary += `<br><strong>Atraso na entrada:</strong> ${lateMinutes} minutos`;
+        }
+        if (lunchLateMinutes > 0) {
+          summary += `<br><strong>Atraso no retorno do almoço:</strong> ${lunchLateMinutes} minutos`;
         }
         if (overtimeHours > 0) {
           summary += `<br><strong>Horas extras:</strong> ${overtimeHours}h`;
