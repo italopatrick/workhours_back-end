@@ -13,6 +13,8 @@ import timeclockRoutes from './routes/timeclock.routes.js';
 import logger from './utils/logger.js';
 import { requestLogger } from './middleware/requestLogger.js';
 import { connectDB, disconnectDB } from './config/database.js';
+import cron from 'node-cron';
+import { createDailyTimeClockRecords } from './jobs/dailyTimeClockJob.js';
 
 dotenv.config();
 
@@ -96,6 +98,23 @@ connectDB().catch((error) => {
   logger.logError(error, { context: 'PostgreSQL Connection' });
   process.exit(1);
 });
+
+// Configurar job diário para criar registros automáticos de ponto
+// Executa diariamente às 23:59 (antes da meia-noite para processar o dia atual)
+cron.schedule('59 23 * * *', async () => {
+  try {
+    logger.info('Executando job diário de criação de registros de ponto automáticos');
+    await createDailyTimeClockRecords();
+    logger.info('Job diário de criação de registros de ponto concluído com sucesso');
+  } catch (error) {
+    logger.logError(error, { context: 'Erro ao executar job diário de criação de registros de ponto' });
+  }
+}, {
+  scheduled: true,
+  timezone: 'America/Sao_Paulo'
+});
+
+logger.info('Job diário de criação de registros de ponto configurado para executar às 23:59 (horário de Brasília)');
 
 // Root route - Welcome message
 app.get('/', (req, res) => {

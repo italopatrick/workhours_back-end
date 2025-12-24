@@ -36,7 +36,7 @@ export async function createDailyTimeClockRecords() {
     for (const employee of employees) {
       try {
         // Verificar se já existe registro para hoje
-        const existingRecord = await prisma.timeClockRecord.findFirst({
+        const existingRecord = await prisma.timeClock.findFirst({
           where: {
             employeeId: employee.id,
             date: today
@@ -60,14 +60,13 @@ export async function createDailyTimeClockRecords() {
           continue;
         }
         
-        // Se já existe registro automático, atualizar
-        if (existingRecord && existingRecord.isAutomatic) {
-          await prisma.timeClockRecord.update({
+        // Se já existe registro automático (sem entryTime e exitTime), atualizar
+        if (existingRecord && !existingRecord.entryTime && !existingRecord.exitTime) {
+          await prisma.timeClock.update({
             where: { id: existingRecord.id },
             data: {
               scheduledHours,
-              negativeHours: scheduledHours, // Horas negativas = horas agendadas (não trabalhou)
-              isAutomatic: true
+              negativeHours: scheduledHours // Horas negativas = horas agendadas (não trabalhou)
             }
           });
           updatedCount++;
@@ -77,15 +76,14 @@ export async function createDailyTimeClockRecords() {
             scheduledHours,
             negativeHours: scheduledHours
           });
-        } else {
+        } else if (!existingRecord) {
           // Criar novo registro automático
-          await prisma.timeClockRecord.create({
+          await prisma.timeClock.create({
             data: {
               employeeId: employee.id,
               date: today,
               scheduledHours,
-              negativeHours: scheduledHours, // Horas negativas = horas agendadas (não trabalhou)
-              isAutomatic: true
+              negativeHours: scheduledHours // Horas negativas = horas agendadas (não trabalhou)
             }
           });
           createdCount++;

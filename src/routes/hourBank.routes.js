@@ -677,11 +677,25 @@ router.get('/limits', protect, async (req, res) => {
 
     const targetEmployeeId = employeeId || req.user.id;
     
-    // Se não for admin e tentar verificar de outro funcionário, negar
-    if (req.user.role !== 'admin' && targetEmployeeId !== req.user.id) {
+    // Se não for admin ou manager e tentar verificar de outro funcionário, negar
+    if ((req.user.role !== 'admin' && req.user.role !== 'manager') && targetEmployeeId !== req.user.id) {
       return res.status(403).json({ 
         error: 'Você não tem permissão para verificar limites de outros funcionários' 
       });
+    }
+    
+    // Se for manager, verificar se o funcionário pertence ao seu departamento
+    if (req.user.role === 'manager' && targetEmployeeId !== req.user.id) {
+      const employee = await prisma.user.findUnique({
+        where: { id: targetEmployeeId },
+        select: { department: true }
+      });
+      
+      if (!employee || employee.department !== req.user.department) {
+        return res.status(403).json({ 
+          error: 'Você só pode verificar limites de funcionários do seu departamento' 
+        });
+      }
     }
 
     const balance = await calculateBalance(targetEmployeeId);

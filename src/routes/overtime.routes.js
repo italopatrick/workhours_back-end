@@ -168,14 +168,28 @@ router.post('/', protect, async (req, res) => {
   try {
     const { date, startTime, endTime, reason } = req.body;
     
-    // Se for admin, usa o employeeId do body, senão usa o id do usuário logado
-    const employeeId = req.user.role === 'admin' ? req.body.employeeId : req.user.id;
+    // Se for admin ou manager, usa o employeeId do body, senão usa o id do usuário logado
+    let employeeId;
+    if (req.user.role === 'admin' || req.user.role === 'manager') {
+      employeeId = req.body.employeeId || req.user.id;
+    } else {
+      employeeId = req.user.id;
+    }
     logger.debug('Dados de criação de hora extra recebidos', { employeeId, userId: req.user?.id });
 
     // Busca o funcionário para pegar o nome e limite de horas extras
     const employee = await findUserById(employeeId);
     if (!employee) {
       return res.status(404).json({ message: 'Funcionário não encontrado' });
+    }
+    
+    // Se for manager, verificar se o funcionário pertence ao seu departamento
+    if (req.user.role === 'manager' && employeeId !== req.user.id) {
+      if (employee.department !== req.user.department) {
+        return res.status(403).json({ 
+          message: 'Você só pode criar horas extras para funcionários do seu departamento' 
+        });
+      }
     }
 
     // Calcula as horas corretamente
