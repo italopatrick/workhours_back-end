@@ -1,5 +1,6 @@
 import nodemailer from 'nodemailer';
 import logger from '../utils/logger.js';
+import { getOrCreateSettings } from '../models/companySettings.model.js';
 
 // Validar variáveis de ambiente SMTP
 function validateSmtpConfig() {
@@ -97,6 +98,23 @@ export async function sendTimeClockEmail(employee, timeClockRecord, type) {
     const typeLabel = typeLabels[type] || 'Registro de Ponto';
     const now = new Date();
 
+    // Buscar logo da empresa
+    let logoDataUri = null;
+    try {
+      const settings = await getOrCreateSettings();
+      if (settings?.logo) {
+        const logoBuffer = Buffer.isBuffer(settings.logo) 
+          ? settings.logo 
+          : Buffer.from(settings.logo);
+        const logoBase64 = logoBuffer.toString('base64');
+        const logoContentType = settings.logoContentType || 'image/png';
+        logoDataUri = `data:${logoContentType};base64,${logoBase64}`;
+      }
+    } catch (error) {
+      logger.warn('Erro ao buscar logo para email', { error: error.message });
+      // Continua sem logo se houver erro
+    }
+
     let timeInfo = '';
     let summary = '';
 
@@ -156,6 +174,8 @@ export async function sendTimeClockEmail(employee, timeClockRecord, type) {
             body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
             .container { max-width: 600px; margin: 0 auto; padding: 20px; }
             .header { background-color: #3b82f6; color: white; padding: 20px; text-align: center; border-radius: 5px 5px 0 0; }
+            .logo-container { margin-bottom: 15px; }
+            .logo-container img { max-height: 60px; max-width: 200px; object-fit: contain; }
             .content { background-color: #f9fafb; padding: 20px; border: 1px solid #e5e7eb; border-radius: 0 0 5px 5px; }
             .info-box { background-color: white; padding: 15px; margin: 15px 0; border-left: 4px solid #3b82f6; }
             .footer { text-align: center; margin-top: 20px; color: #6b7280; font-size: 12px; }
@@ -164,6 +184,7 @@ export async function sendTimeClockEmail(employee, timeClockRecord, type) {
         <body>
           <div class="container">
             <div class="header">
+              ${logoDataUri ? `<div class="logo-container"><img src="${logoDataUri}" alt="Logo da Empresa" /></div>` : ''}
               <h1>Registro de Ponto - ${typeLabel}</h1>
             </div>
             <div class="content">
