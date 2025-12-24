@@ -795,7 +795,7 @@ router.get('/department-records', protect, async (req, res) => {
 router.patch('/records/:recordId', protect, adminOrManager, async (req, res) => {
   try {
     const { recordId } = req.params;
-    const { entryTime, lunchExitTime, lunchReturnTime, exitTime, justification } = req.body;
+    const { entryTime, lunchExitTime, lunchReturnTime, exitTime, justification, justificationId } = req.body;
     
     // Buscar o registro
     const record = await prisma.timeClock.findUnique({
@@ -831,7 +831,36 @@ router.patch('/records/:recordId', protect, adminOrManager, async (req, res) => 
     if (lunchExitTime !== undefined) updateData.lunchExitTime = lunchExitTime ? new Date(lunchExitTime) : null;
     if (lunchReturnTime !== undefined) updateData.lunchReturnTime = lunchReturnTime ? new Date(lunchReturnTime) : null;
     if (exitTime !== undefined) updateData.exitTime = exitTime ? new Date(exitTime) : null;
-    if (justification !== undefined) updateData.justification = justification;
+    
+    // Processar justificativa: priorizar justificationId, depois justification (texto) para compatibilidade
+    if (justificationId !== undefined) {
+      if (justificationId === null || justificationId === '') {
+        // Remover justificativa
+        updateData.justificationId = null;
+        updateData.justification = null;
+      } else {
+        // Buscar justificativa pelo ID
+        const justificationRecord = await prisma.justification.findUnique({
+          where: { id: justificationId }
+        });
+        
+        if (!justificationRecord || !justificationRecord.isActive) {
+          return res.status(400).json({ 
+            message: 'Justificativa não encontrada ou inativa.' 
+          });
+        }
+        
+        updateData.justificationId = justificationId;
+        updateData.justification = justificationRecord.reason;
+      }
+    } else if (justification !== undefined) {
+      // Compatibilidade retroativa: se apenas justification (texto) for fornecido
+      updateData.justification = justification;
+      // Se houver justificationId no registro atual, manter; caso contrário, limpar
+      if (!record.justificationId) {
+        updateData.justificationId = null;
+      }
+    }
     
     // Recalcular valores se houver entrada e saída
     if (updateData.entryTime || updateData.exitTime || entryTime || exitTime) {
