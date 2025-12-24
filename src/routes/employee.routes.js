@@ -504,6 +504,16 @@ const handleWorkScheduleUpdate = async (req, res) => {
       return res.status(404).json({ message: 'Funcionário não encontrado' });
     }
 
+    // Se for manager, verificar se o funcionário pertence ao seu departamento
+    if (req.user.role === 'manager') {
+      const hasAccess = await checkEmployeeDepartment(req.params.id, req.user);
+      if (!hasAccess) {
+        return res.status(403).json({ 
+          message: 'Você só pode gerenciar funcionários do seu departamento.' 
+        });
+      }
+    }
+
     // Buscar jornada existente na nova tabela normalizada
     const existingSchedules = await getWorkScheduleByEmployee(user.id, false);
     const hasExistingSchedule = existingSchedules && existingSchedules.length > 0;
