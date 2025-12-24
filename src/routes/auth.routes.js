@@ -247,16 +247,23 @@ router.post('/external-login', async (req, res) => {
         logger.info('Novo usuário criado com ID externo', { externalId, userRole, userId: user.id, login });
       } else {
         // Atualizar dados do usuário existente
+        // IMPORTANTE: Preservar a role do banco de dados local, não sobrescrever com getUserRole
+        // Isso permite que admins alterem a role manualmente sem ser resetada no login
         user = await updateUser(user.id, {
           name: userName,
           email: userEmail,
           department: userDepartment,
           externalAuth: true,
-          externalId: String(externalId), // Garantir que é string
-          role: userRole // Atualizar papel com base no ID externo
+          externalId: String(externalId) // Garantir que é string
+          // NÃO atualizar role aqui - preservar a role do banco de dados
         });
         
-        logger.info('Usuário existente atualizado com ID externo', { externalId, userRole, userId: user.id, login });
+        logger.info('Usuário existente atualizado com ID externo', { 
+          externalId, 
+          preservedRole: user.role, 
+          userId: user.id, 
+          login 
+        });
       }
       
       // Gerar token JWT para o usuário
