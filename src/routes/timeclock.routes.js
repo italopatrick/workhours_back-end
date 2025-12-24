@@ -6,6 +6,7 @@ import { findUserById } from '../models/user.model.js';
 import { logAudit, getRequestMetadata } from '../middleware/audit.js';
 import logger from '../utils/logger.js';
 import { formatDateForDisplay } from '../utils/dateFormatter.js';
+import { parseWorkScheduleArray } from '../models/workSchedule.model.js';
 
 const router = express.Router();
 
@@ -130,6 +131,19 @@ const calculateWorkedHours = (entryTime, exitTime, lunchExitTime, lunchReturnTim
 };
 
 // Helper: Calcular horas agendadas
+// Helper: Obter workSchedule da tabela work_schedules (formato atual)
+// O campo workSchedule (JSON) no User é legado e pode ser removido
+const getWorkSchedule = (employee) => {
+  if (!employee) return null;
+  
+  // Sempre usar a tabela work_schedules (formato atual)
+  if (employee.workSchedules && employee.workSchedules.length > 0) {
+    return parseWorkScheduleArray(employee.workSchedules);
+  }
+  
+  return null;
+};
+
 const calculateScheduledHours = (workSchedule, date, lunchBreakHours = 0) => {
   if (!workSchedule) return 0;
   
@@ -205,10 +219,11 @@ router.post('/clock-in', protect, async (req, res) => {
     
     // Buscar dados do funcionário para calcular atraso
     const employee = await findUserById(employeeId);
-    if (employee && employee.workSchedule) {
+    const workSchedule = getWorkSchedule(employee);
+    if (employee && workSchedule) {
       const lateMinutes = calculateLateMinutes(
         record.entryTime,
-        employee.workSchedule,
+        workSchedule,
         today,
         employee.lateTolerance || 0
       );
@@ -415,9 +430,12 @@ router.post('/clock-out', protect, async (req, res) => {
       lunchBreakHours
     );
     
+    // Obter workSchedule no formato correto
+    const workSchedule = getWorkSchedule(employee);
+    
     // Calcular horas agendadas
-    const scheduledHours = employee?.workSchedule 
-      ? calculateScheduledHours(employee.workSchedule, today, lunchBreakHours)
+    const scheduledHours = workSchedule 
+      ? calculateScheduledHours(workSchedule, today, lunchBreakHours)
       : 0;
     
     // Calcular horas negativas
@@ -809,8 +827,19 @@ router.patch('/records/:recordId', protect, adminOrManager, async (req, res) => 
           select: {
             id: true,
             department: true,
-            workSchedule: true,
-            lunchBreakHours: true
+            workSchedules: {    // Tabela normalizada (formato atual)
+              select: {
+                dayOfWeek: true,
+                startTime: true,
+                endTime: true,
+                isActive: true
+              },
+              orderBy: {
+                dayOfWeek: 'asc'
+              }
+            },
+            lunchBreakHours: true,
+            lateTolerance: true
           }
         }
       }
@@ -885,9 +914,12 @@ router.patch('/records/:recordId', protect, adminOrManager, async (req, res) => 
           lunchBreakHours
         );
         
+        // Obter workSchedule no formato correto
+        const workSchedule = getWorkSchedule(record.employee);
+        
         // Calcular horas agendadas
-        const scheduledHours = record.employee.workSchedule 
-          ? calculateScheduledHours(record.employee.workSchedule, record.date, lunchBreakHours)
+        const scheduledHours = workSchedule 
+          ? calculateScheduledHours(workSchedule, record.date, lunchBreakHours)
           : 0;
         
         // Calcular horas negativas (apenas se houver horário agendado)
@@ -900,10 +932,10 @@ router.patch('/records/:recordId', protect, adminOrManager, async (req, res) => 
           : 0;
         
         // Calcular atraso
-        const lateMinutes = finalEntryTime && record.employee.workSchedule
+        const lateMinutes = finalEntryTime && workSchedule
           ? calculateLateMinutes(
               finalEntryTime,
-              record.employee.workSchedule,
+              workSchedule,
               record.date,
               record.employee.lateTolerance || 0
             )
@@ -1077,10 +1109,11 @@ router.post('/clock-in-with-justification', protect, async (req, res) => {
     
     // Buscar dados do funcionário para calcular atraso
     const employee = await findUserById(employeeId);
-    if (employee && employee.workSchedule) {
+    const workSchedule = getWorkSchedule(employee);
+    if (employee && workSchedule) {
       const lateMinutes = calculateLateMinutes(
         record.entryTime,
-        employee.workSchedule,
+        workSchedule,
         today,
         employee.lateTolerance || 0
       );
@@ -1173,9 +1206,12 @@ router.post('/clock-out-with-justification', protect, async (req, res) => {
       lunchBreakHours
     );
     
+    // Obter workSchedule no formato correto
+    const workSchedule = getWorkSchedule(employee);
+    
     // Calcular horas agendadas
-    const scheduledHours = employee?.workSchedule 
-      ? calculateScheduledHours(employee.workSchedule, today, lunchBreakHours)
+    const scheduledHours = workSchedule 
+      ? calculateScheduledHours(workSchedule, today, lunchBreakHours)
       : 0;
     
     // Calcular horas negativas
