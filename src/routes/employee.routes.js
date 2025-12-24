@@ -1,5 +1,6 @@
 import express from 'express';
-import { protect, admin } from '../middleware/auth.js';
+import { protect, admin, adminOrManager } from '../middleware/auth.js';
+import { checkEmployeeDepartment } from '../middleware/departmentAccess.js';
 import { 
   findUsers, 
   findUserById, 
@@ -220,14 +221,24 @@ router.delete('/:id', protect, admin, async (req, res) => {
   }
 });
 
-// Atualizar limite de horas extras de um funcionário (admin only)
-router.patch('/:id/overtime-limit', protect, admin, async (req, res) => {
+// Atualizar limite de horas extras de um funcionário (admin ou manager)
+router.patch('/:id/overtime-limit', protect, adminOrManager, async (req, res) => {
   try {
     const { overtimeLimit } = req.body;
     
     const user = await findUserById(req.params.id);
     if (!user) {
       return res.status(404).json({ message: 'Funcionário não encontrado' });
+    }
+
+    // Se for manager, verificar se o funcionário pertence ao seu departamento
+    if (req.user.role === 'manager') {
+      const hasAccess = await checkEmployeeDepartment(req.params.id, req.user);
+      if (!hasAccess) {
+        return res.status(403).json({ 
+          message: 'Você só pode gerenciar funcionários do seu departamento.' 
+        });
+      }
     }
 
     const oldLimit = user.overtimeLimit;
@@ -269,8 +280,8 @@ router.patch('/:id/overtime-limit', protect, admin, async (req, res) => {
   }
 });
 
-// Adicionar exceção mensal de horas extras (admin only)
-router.post('/:id/overtime-exception', protect, admin, async (req, res) => {
+// Adicionar exceção mensal de horas extras (admin ou manager)
+router.post('/:id/overtime-exception', protect, adminOrManager, async (req, res) => {
   try {
     const { month, year, additionalHours } = req.body;
     
@@ -281,6 +292,16 @@ router.post('/:id/overtime-exception', protect, admin, async (req, res) => {
     const user = await findUserById(req.params.id);
     if (!user) {
       return res.status(404).json({ message: 'Funcionário não encontrado' });
+    }
+
+    // Se for manager, verificar se o funcionário pertence ao seu departamento
+    if (req.user.role === 'manager') {
+      const hasAccess = await checkEmployeeDepartment(req.params.id, req.user);
+      if (!hasAccess) {
+        return res.status(403).json({ 
+          message: 'Você só pode gerenciar funcionários do seu departamento.' 
+        });
+      }
     }
 
     // Verifica se já existe uma exceção para este mês/ano
@@ -337,14 +358,24 @@ router.post('/:id/overtime-exception', protect, admin, async (req, res) => {
   }
 });
 
-// Remover exceção mensal de horas extras (admin only)
-router.delete('/:id/overtime-exception/:month/:year', protect, admin, async (req, res) => {
+// Remover exceção mensal de horas extras (admin ou manager)
+router.delete('/:id/overtime-exception/:month/:year', protect, adminOrManager, async (req, res) => {
   try {
     const { id, month, year } = req.params;
     
     const user = await findUserById(id);
     if (!user) {
       return res.status(404).json({ message: 'Funcionário não encontrado' });
+    }
+
+    // Se for manager, verificar se o funcionário pertence ao seu departamento
+    if (req.user.role === 'manager') {
+      const hasAccess = await checkEmployeeDepartment(id, req.user);
+      if (!hasAccess) {
+        return res.status(403).json({ 
+          message: 'Você só pode gerenciar funcionários do seu departamento.' 
+        });
+      }
     }
 
     // Remove a exceção para este mês/ano
@@ -622,12 +653,22 @@ const handleWorkScheduleUpdate = async (req, res) => {
   }
 };
 
-// GET /api/employees/:id/work-schedule - Buscar jornada de trabalho (admin only)
-router.get('/:id/work-schedule', protect, admin, async (req, res) => {
+// GET /api/employees/:id/work-schedule - Buscar jornada de trabalho (admin ou manager)
+router.get('/:id/work-schedule', protect, adminOrManager, async (req, res) => {
   try {
     const user = await findUserById(req.params.id);
     if (!user) {
       return res.status(404).json({ message: 'Funcionário não encontrado' });
+    }
+
+    // Se for manager, verificar se o funcionário pertence ao seu departamento
+    if (req.user.role === 'manager') {
+      const hasAccess = await checkEmployeeDepartment(req.params.id, req.user);
+      if (!hasAccess) {
+        return res.status(403).json({ 
+          message: 'Você só pode gerenciar funcionários do seu departamento.' 
+        });
+      }
     }
 
     // Buscar jornada da tabela normalizada
@@ -651,9 +692,9 @@ router.get('/:id/work-schedule', protect, admin, async (req, res) => {
   }
 });
 
-// Criar ou atualizar jornada de trabalho (admin only)
+// Criar ou atualizar jornada de trabalho (admin ou manager)
 // POST para criar inicialmente, PATCH para atualizar
-router.post('/:id/work-schedule', protect, admin, handleWorkScheduleUpdate);
-router.patch('/:id/work-schedule', protect, admin, handleWorkScheduleUpdate);
+router.post('/:id/work-schedule', protect, adminOrManager, handleWorkScheduleUpdate);
+router.patch('/:id/work-schedule', protect, adminOrManager, handleWorkScheduleUpdate);
 
 export default router;
