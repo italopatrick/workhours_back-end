@@ -203,7 +203,7 @@ export async function sendTimeClockEmail(employee, timeClockRecord, type) {
               
               <div class="footer">
                 <p>Este é um email automático, por favor não responda.</p>
-                <p>Sistema PrimeTime - WorkHours</p>
+                <p>Sistema PrimeTime</p>
               </div>
             </div>
           </div>
