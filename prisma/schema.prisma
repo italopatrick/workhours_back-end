@@ -234,6 +234,7 @@ model TimeClock {
   totalWorkedHours  Float?    // Horas trabalhadas (sem contar almoço)
   scheduledHours    Float?    // Horas esperadas do dia
   lateMinutes       Int?      // Minutos de atraso
+  lunchLateMinutes  Int?      // Minutos de atraso no retorno do almoço
   overtimeHours     Float?    // Horas extras (se trabalhou além do horário)
   negativeHours     Float?    // Horas negativas (se saiu antes)
   hourBankCreditId  String?   // ID do crédito criado (se houver hora extra)

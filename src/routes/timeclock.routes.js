@@ -130,6 +130,25 @@ const calculateWorkedHours = (entryTime, exitTime, lunchExitTime, lunchReturnTim
   return Math.max(0, totalHours);
 };
 
+// Helper: Calcular horas extras por almoço não tirado
+// Se o funcionário tirou menos almoço que o configurado, a diferença é hora extra
+const calculateLunchOvertime = (lunchExitTime, lunchReturnTime, lunchBreakHours) => {
+  // Apenas calcular se todos os dados necessários estiverem presentes
+  if (!lunchExitTime || !lunchReturnTime || !lunchBreakHours || lunchBreakHours <= 0) {
+    return 0;
+  }
+  
+  const lunchExit = new Date(lunchExitTime);
+  const lunchReturn = new Date(lunchReturnTime);
+  const lunchDuration = (lunchReturn.getTime() - lunchExit.getTime()) / (1000 * 60 * 60);
+  
+  // Se tirou menos almoço que o configurado, a diferença é hora extra
+  // Exemplo: configurado 2h, tirou 1h = 1h extra
+  const lunchOvertime = Math.max(0, lunchBreakHours - lunchDuration);
+  
+  return lunchOvertime;
+};
+
 // Helper: Calcular horas agendadas
 // Helper: Obter workSchedule da tabela work_schedules (formato atual)
 // O campo workSchedule (JSON) no User é legado e pode ser removido
@@ -178,6 +197,26 @@ const calculateLateMinutes = (entryTime, workSchedule, date, lateTolerance = 0) 
   const diffMinutes = (actualEntry.getTime() - scheduledStart.getTime()) / (1000 * 60);
   
   return Math.max(0, diffMinutes - lateTolerance);
+};
+
+// Helper: Calcular atraso no retorno do almoço
+// Se o funcionário retornar após o horário esperado (lunchExitTime + lunchBreakHours), calcula o atraso
+const calculateLunchLateMinutes = (lunchExitTime, lunchReturnTime, lunchBreakHours) => {
+  if (!lunchExitTime || !lunchReturnTime || !lunchBreakHours || lunchBreakHours <= 0) {
+    return 0;
+  }
+  
+  const lunchExit = new Date(lunchExitTime);
+  const lunchReturn = new Date(lunchReturnTime);
+  
+  // Calcular horário esperado de retorno
+  const expectedReturn = new Date(lunchExit.getTime() + (lunchBreakHours * 60 * 60 * 1000));
+  
+  // Calcular diferença em minutos
+  const diffMinutes = (lunchReturn.getTime() - expectedReturn.getTime()) / (1000 * 60);
+  
+  // Retornar apenas se houver atraso (positivo)
+  return Math.max(0, diffMinutes);
 };
 
 // POST /timeclock/clock-in - Registrar entrada
@@ -360,10 +399,25 @@ router.post('/clock-in-lunch', protect, async (req, res) => {
       return res.status(400).json({ error: 'Volta do almoço já registrada' });
     }
     
+    // Buscar dados do funcionário para obter lunchBreakHours
+    const employee = await findUserById(employeeId);
+    const lunchBreakHours = employee?.lunchBreakHours || 0;
+    
+    // Calcular horário de retorno
+    const lunchReturnTime = new Date();
+    
+    // Calcular atraso no retorno do almoço
+    const lunchLateMinutes = calculateLunchLateMinutes(
+      record.lunchExitTime,
+      lunchReturnTime,
+      lunchBreakHours
+    );
+    
     const updatedRecord = await prisma.timeClock.update({
       where: { id: record.id },
       data: {
-        lunchReturnTime: new Date()
+        lunchReturnTime,
+        lunchLateMinutes: lunchLateMinutes > 0 ? Math.round(lunchLateMinutes) : null
       }
     });
     
@@ -441,12 +495,20 @@ router.post('/clock-out', protect, async (req, res) => {
     // Calcular horas negativas
     const negativeHours = scheduledHours > 0 ? Math.max(0, scheduledHours - totalWorkedHours) : 0;
     
-    // Calcular horas extras
-    // Calcular horas extras (apenas se houver horário agendado e horas trabalhadas excederem o agendado)
-    // Se não houver horário agendado (scheduledHours = 0), não há como calcular horas extras
-    const overtimeHours = (scheduledHours > 0 && totalWorkedHours > scheduledHours) 
+    // Calcular horas extras normais (trabalhou além do horário agendado)
+    const normalOvertime = (scheduledHours > 0 && totalWorkedHours > scheduledHours) 
       ? totalWorkedHours - scheduledHours 
       : 0;
+    
+    // Calcular horas extras por almoço não tirado
+    const lunchOvertime = calculateLunchOvertime(
+      record.lunchExitTime,
+      record.lunchReturnTime,
+      lunchBreakHours
+    );
+    
+    // Total de horas extras = horas extras normais + horas extras por almoço
+    const overtimeHours = normalOvertime + lunchOvertime;
     
     const updateData = {
       exitTime,
@@ -925,11 +987,29 @@ router.patch('/records/:recordId', protect, adminOrManager, async (req, res) => 
         // Calcular horas negativas (apenas se houver horário agendado)
         const negativeHours = scheduledHours > 0 ? Math.max(0, scheduledHours - totalWorkedHours) : 0;
         
-        // Calcular horas extras (apenas se houver horário agendado e horas trabalhadas excederem o agendado)
-        // Se não houver horário agendado (scheduledHours = 0), não há como calcular horas extras
-        const overtimeHours = (scheduledHours > 0 && totalWorkedHours > scheduledHours) 
+        // Calcular horas extras normais (trabalhou além do horário agendado)
+        const normalOvertime = (scheduledHours > 0 && totalWorkedHours > scheduledHours) 
           ? totalWorkedHours - scheduledHours 
           : 0;
+        
+        // Calcular horas extras por almoço não tirado
+        const lunchOvertime = calculateLunchOvertime(
+          finalLunchExitTime,
+          finalLunchReturnTime,
+          lunchBreakHours
+        );
+        
+        // Total de horas extras = horas extras normais + horas extras por almoço
+        const overtimeHours = normalOvertime + lunchOvertime;
+        
+        // Calcular atraso no retorno do almoço (se houver registro de almoço)
+        const lunchLateMinutes = (finalLunchExitTime && finalLunchReturnTime)
+          ? calculateLunchLateMinutes(
+              finalLunchExitTime,
+              finalLunchReturnTime,
+              lunchBreakHours
+            )
+          : null;
         
         // Calcular atraso
         const lateMinutes = finalEntryTime && workSchedule
@@ -946,6 +1026,7 @@ router.patch('/records/:recordId', protect, adminOrManager, async (req, res) => 
         updateData.negativeHours = negativeHours > 0 ? negativeHours : null;
         updateData.overtimeHours = overtimeHours > 0 ? overtimeHours : null;
         updateData.lateMinutes = lateMinutes > 0 ? Math.round(lateMinutes) : null;
+        updateData.lunchLateMinutes = lunchLateMinutes > 0 ? Math.round(lunchLateMinutes) : null;
       }
     }
     
@@ -1217,12 +1298,29 @@ router.post('/clock-out-with-justification', protect, async (req, res) => {
     // Calcular horas negativas
     const negativeHours = scheduledHours > 0 ? Math.max(0, scheduledHours - totalWorkedHours) : 0;
     
-    // Calcular horas extras
-    // Calcular horas extras (apenas se houver horário agendado e horas trabalhadas excederem o agendado)
-    // Se não houver horário agendado (scheduledHours = 0), não há como calcular horas extras
-    const overtimeHours = (scheduledHours > 0 && totalWorkedHours > scheduledHours) 
+    // Calcular horas extras normais (trabalhou além do horário agendado)
+    const normalOvertime = (scheduledHours > 0 && totalWorkedHours > scheduledHours) 
       ? totalWorkedHours - scheduledHours 
       : 0;
+    
+    // Calcular horas extras por almoço não tirado
+    const lunchOvertime = calculateLunchOvertime(
+      record.lunchExitTime,
+      record.lunchReturnTime,
+      lunchBreakHours
+    );
+    
+    // Total de horas extras = horas extras normais + horas extras por almoço
+    const overtimeHours = normalOvertime + lunchOvertime;
+    
+    // Calcular atraso no retorno do almoço (se houver registro de almoço)
+    const lunchLateMinutes = (record.lunchExitTime && record.lunchReturnTime)
+      ? calculateLunchLateMinutes(
+          record.lunchExitTime,
+          record.lunchReturnTime,
+          lunchBreakHours
+        )
+      : null;
     
     const updateData = {
       exitTime: exitDateTime,
@@ -1230,6 +1328,7 @@ router.post('/clock-out-with-justification', protect, async (req, res) => {
       scheduledHours,
       overtimeHours: overtimeHours > 0 ? overtimeHours : null,
       negativeHours: negativeHours > 0 ? negativeHours : null,
+      lunchLateMinutes: lunchLateMinutes > 0 ? Math.round(lunchLateMinutes) : null,
       justificationId,
       justification: justification.reason
     };
