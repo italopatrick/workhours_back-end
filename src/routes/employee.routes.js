@@ -13,7 +13,8 @@ import {
   createOrUpdateWorkSchedule,
   getWorkScheduleByEmployee,
   parseWorkScheduleArray,
-  convertWorkScheduleObjectToArray
+  convertWorkScheduleObjectToArray,
+  deleteWorkSchedule
 } from '../models/workSchedule.model.js';
 import { validateWorkSchedule } from '../utils/workScheduleUtils.js';
 import { logAudit, getRequestMetadata } from '../middleware/audit.js';
@@ -594,6 +595,32 @@ const handleWorkScheduleUpdate = async (req, res) => {
       schedulesCount: schedulesArray.length,
       schedules: schedulesArray
     });
+
+    // Identificar e remover dias que foram desmarcados
+    // Comparar dias existentes no banco com os dias sendo enviados
+    const existingDays = existingSchedules.map(s => s.dayOfWeek);
+    const newDays = schedulesArray.map(s => s.dayOfWeek);
+    
+    // Identificar dias a remover (existem no banco mas não no novo array)
+    const daysToRemove = existingDays.filter(day => !newDays.includes(day));
+    
+    if (daysToRemove.length > 0) {
+      logger.info('Removendo dias desmarcados da jornada', {
+        employeeId: user.id,
+        daysToRemove,
+        existingDays,
+        newDays
+      });
+      
+      // Deletar dias removidos
+      for (const dayToRemove of daysToRemove) {
+        await deleteWorkSchedule(user.id, dayToRemove);
+        logger.info('Dia removido da jornada', { 
+          employeeId: user.id, 
+          dayOfWeek: dayToRemove 
+        });
+      }
+    }
 
     // Criar/atualizar jornada na tabela normalizada
     const createdSchedules = await createOrUpdateWorkSchedule(user.id, schedulesArray);
