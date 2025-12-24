@@ -100,8 +100,9 @@ connectDB().catch((error) => {
 });
 
 // Configurar job diário para criar registros automáticos de ponto
-// Executa diariamente às 23:59 (antes da meia-noite para processar o dia atual)
-cron.schedule('59 23 * * *', async () => {
+// Executa diariamente às 00:05 (início do dia seguinte para processar o dia anterior)
+// Isso garante que todas as jornadas do dia anterior já terminaram
+cron.schedule('5 0 * * *', async () => {
   try {
     logger.info('Executando job diário de criação de registros de ponto automáticos');
     await createDailyTimeClockRecords();
@@ -114,7 +115,7 @@ cron.schedule('59 23 * * *', async () => {
   timezone: 'America/Sao_Paulo'
 });
 
-logger.info('Job diário de criação de registros de ponto configurado para executar às 23:59 (horário de Brasília)');
+logger.info('Job diário de criação de registros de ponto configurado para executar às 00:05 (horário de Brasília) - processa o dia anterior');
 
 // Root route - Welcome message
 app.get('/', (req, res) => {

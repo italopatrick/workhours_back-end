@@ -9,8 +9,11 @@ import logger from '../utils/logger.js';
  */
 export async function createDailyTimeClockRecords() {
   try {
-    const today = new Date().toISOString().split('T')[0];
-    logger.info('Iniciando job diário de criação de registros de ponto automáticos', { date: today });
+    // Processar o dia anterior (ontem) para garantir que a jornada já terminou
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const targetDate = yesterday.toISOString().split('T')[0];
+    logger.info('Iniciando job diário de criação de registros de ponto automáticos', { date: targetDate });
     
     // Buscar todos os funcionários ativos (não admin)
     const employees = await prisma.user.findMany({
@@ -35,11 +38,11 @@ export async function createDailyTimeClockRecords() {
     
     for (const employee of employees) {
       try {
-        // Verificar se já existe registro para hoje
+        // Verificar se já existe registro para o dia alvo (ontem)
         const existingRecord = await prisma.timeClock.findFirst({
           where: {
             employeeId: employee.id,
-            date: today
+            date: targetDate
           }
         });
         
@@ -49,9 +52,9 @@ export async function createDailyTimeClockRecords() {
           continue;
         }
         
-        // Calcular horas agendadas para hoje
+        // Calcular horas agendadas para o dia alvo (ontem)
         const scheduledHours = employee.workSchedule 
-          ? calculateScheduledHours(employee.workSchedule, today, employee.lunchBreakHours || 0)
+          ? calculateScheduledHours(employee.workSchedule, targetDate, employee.lunchBreakHours || 0)
           : 0;
         
         // Se não há horário agendado para hoje (ex: fim de semana), pular
@@ -81,7 +84,7 @@ export async function createDailyTimeClockRecords() {
           await prisma.timeClock.create({
             data: {
               employeeId: employee.id,
-              date: today,
+              date: targetDate,
               scheduledHours,
               negativeHours: scheduledHours // Horas negativas = horas agendadas (não trabalhou)
             }
@@ -104,7 +107,7 @@ export async function createDailyTimeClockRecords() {
     }
     
     logger.info('Job diário de criação de registros de ponto concluído', {
-      date: today,
+      date: targetDate,
       totalEmployees: employees.length,
       created: createdCount,
       updated: updatedCount,
@@ -113,7 +116,7 @@ export async function createDailyTimeClockRecords() {
     
     return {
       success: true,
-      date: today,
+      date: targetDate,
       totalEmployees: employees.length,
       created: createdCount,
       updated: updatedCount,
