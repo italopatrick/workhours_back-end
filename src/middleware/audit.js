@@ -41,8 +41,17 @@ export async function logAudit({
     // Log apenas em caso de erro para não poluir os logs
   } catch (error) {
     // Não deve interromper o fluxo da aplicação se o log falhar
-    // Usar console.error aqui para não criar loop infinito de logs
-    console.error(`Erro ao criar log de auditoria: ${error.message}`, error);
+    // Erro de enum (22P02) indica que o valor não existe no enum - apenas logar como warning
+    const isEnumError = error.message?.includes('invalid input value for enum') || 
+                       error.code === '22P02';
+    
+    if (isEnumError) {
+      // Log silencioso para erros de enum (migração pendente)
+      console.warn(`Log de auditoria não criado (enum não atualizado): ${action}`);
+    } else {
+      // Para outros erros, logar normalmente
+      console.error(`Erro ao criar log de auditoria: ${error.message}`, error);
+    }
   }
 }
 
