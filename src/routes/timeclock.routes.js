@@ -424,7 +424,11 @@ router.post('/clock-out', protect, async (req, res) => {
     const negativeHours = scheduledHours > 0 ? Math.max(0, scheduledHours - totalWorkedHours) : 0;
     
     // Calcular horas extras
-    const overtimeHours = totalWorkedHours > scheduledHours ? totalWorkedHours - scheduledHours : 0;
+    // Calcular horas extras (apenas se houver horário agendado e horas trabalhadas excederem o agendado)
+    // Se não houver horário agendado (scheduledHours = 0), não há como calcular horas extras
+    const overtimeHours = (scheduledHours > 0 && totalWorkedHours > scheduledHours) 
+      ? totalWorkedHours - scheduledHours 
+      : 0;
     
     const updateData = {
       exitTime,
@@ -886,11 +890,14 @@ router.patch('/records/:recordId', protect, adminOrManager, async (req, res) => 
           ? calculateScheduledHours(record.employee.workSchedule, record.date, lunchBreakHours)
           : 0;
         
-        // Calcular horas negativas
+        // Calcular horas negativas (apenas se houver horário agendado)
         const negativeHours = scheduledHours > 0 ? Math.max(0, scheduledHours - totalWorkedHours) : 0;
         
-        // Calcular horas extras
-        const overtimeHours = totalWorkedHours > scheduledHours ? totalWorkedHours - scheduledHours : 0;
+        // Calcular horas extras (apenas se houver horário agendado e horas trabalhadas excederem o agendado)
+        // Se não houver horário agendado (scheduledHours = 0), não há como calcular horas extras
+        const overtimeHours = (scheduledHours > 0 && totalWorkedHours > scheduledHours) 
+          ? totalWorkedHours - scheduledHours 
+          : 0;
         
         // Calcular atraso
         const lateMinutes = finalEntryTime && record.employee.workSchedule
@@ -1175,7 +1182,11 @@ router.post('/clock-out-with-justification', protect, async (req, res) => {
     const negativeHours = scheduledHours > 0 ? Math.max(0, scheduledHours - totalWorkedHours) : 0;
     
     // Calcular horas extras
-    const overtimeHours = totalWorkedHours > scheduledHours ? totalWorkedHours - scheduledHours : 0;
+    // Calcular horas extras (apenas se houver horário agendado e horas trabalhadas excederem o agendado)
+    // Se não houver horário agendado (scheduledHours = 0), não há como calcular horas extras
+    const overtimeHours = (scheduledHours > 0 && totalWorkedHours > scheduledHours) 
+      ? totalWorkedHours - scheduledHours 
+      : 0;
     
     const updateData = {
       exitTime: exitDateTime,
