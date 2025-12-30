@@ -301,7 +301,9 @@ router.post('/debit', protect, admin, async (req, res) => {
 
     // Verificar saldo disponível
     const balance = await calculateBalance(employeeId);
-    if (balance.availableBalance < hours) {
+    // Usa uma tolerância de 0.01 horas (36 segundos) para evitar problemas de precisão de ponto flutuante
+    const tolerance = 0.01;
+    if (balance.availableBalance < (hours - tolerance)) {
       return res.status(400).json({
         error: `Saldo insuficiente. Saldo disponível: ${balance.availableBalance}h, Solicitado: ${hours}h`,
         canProceed: false,
@@ -462,7 +464,9 @@ router.patch('/records/:id/status', protect, admin, async (req, res) => {
     // Se está aprovando um débito, verificar saldo disponível
     if (status === 'approved' && record.type === 'debit') {
       const balance = await calculateBalance(record.employeeId);
-      if (balance.availableBalance < record.hours) {
+      // Usa uma tolerância de 0.01 horas (36 segundos) para evitar problemas de precisão de ponto flutuante
+      const tolerance = 0.01;
+      if (balance.availableBalance < (record.hours - tolerance)) {
         return res.status(400).json({
           error: `Saldo insuficiente. Saldo disponível: ${balance.availableBalance}h, Débito: ${record.hours}h`,
           canProceed: false,
@@ -602,7 +606,9 @@ router.get('/limits', protect, async (req, res) => {
       }
     } else if (type === 'debit') {
       // Verificar saldo disponível
-      if (balance.availableBalance < hoursNum) {
+      // Usa uma tolerância de 0.01 horas (36 segundos) para evitar problemas de precisão de ponto flutuante
+      const tolerance = 0.01;
+      if (balance.availableBalance < (hoursNum - tolerance)) {
         canProceed = false;
         message = `Saldo insuficiente. Saldo disponível: ${balance.availableBalance}h, Solicitado: ${hoursNum}h`;
       }
