@@ -85,6 +85,7 @@ model User {
   workSchedule     Json?    // Jornada por dia da semana: { monday: { startTime: "08:00", endTime: "18:00" }, ... }
   lunchBreakHours  Float?   // Horas de almoço (ex: 1.0, 1.5)
   lateTolerance    Int?     @default(10) // Tolerância em minutos para atraso
+  requiresTimeClock Boolean  @default(false) // Se true, funcionário precisa bater ponto
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 

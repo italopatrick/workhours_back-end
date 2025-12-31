@@ -1,5 +1,6 @@
 import prisma from '../config/database.js';
 import logger from '../utils/logger.js';
+import { getScheduledHoursForDay } from '../utils/timeClockUtils.js';
 
 /**
  * Job diário para criar registros automáticos de ponto com horas negativas
@@ -15,18 +16,28 @@ export async function createDailyTimeClockRecords() {
     const targetDate = yesterday.toISOString().split('T')[0];
     logger.info('Iniciando job diário de criação de registros de ponto automáticos', { date: targetDate });
     
-    // Buscar todos os funcionários ativos (não admin)
+    // Buscar todos os funcionários (independente da role)
     const employees = await prisma.user.findMany({
-      where: {
-        role: { not: 'admin' }
-      },
       select: {
         id: true,
         name: true,
         email: true,
         department: true,
-        workSchedule: true,
-        lunchBreakHours: true
+        workSchedule: true, // Manter para backward compatibility
+        workSchedules: {
+          select: {
+            id: true,
+            dayOfWeek: true,
+            startTime: true,
+            endTime: true,
+            isActive: true
+          },
+          orderBy: {
+            dayOfWeek: 'asc'
+          }
+        },
+        lunchBreakHours: true,
+        requiresTimeClock: true
       }
     });
     
@@ -38,6 +49,12 @@ export async function createDailyTimeClockRecords() {
     
     for (const employee of employees) {
       try {
+        // Verificar se funcionário precisa bater ponto
+        if (!employee.requiresTimeClock) {
+          skippedCount++;
+          continue;
+        }
+        
         // Verificar se já existe registro para o dia alvo (ontem)
         const existingRecord = await prisma.timeClock.findFirst({
           where: {
@@ -52,12 +69,11 @@ export async function createDailyTimeClockRecords() {
           continue;
         }
         
-        // Calcular horas agendadas para o dia alvo (ontem)
-        const scheduledHours = employee.workSchedule 
-          ? calculateScheduledHours(employee.workSchedule, targetDate, employee.lunchBreakHours || 0)
-          : 0;
+        // Calcular horas agendadas para o dia alvo (ontem) usando função utilitária
+        const targetDateObj = new Date(targetDate);
+        const scheduledHours = getScheduledHoursForDay(employee, targetDateObj);
         
-        // Se não há horário agendado para hoje (ex: fim de semana), pular
+        // Se não há horário agendado para o dia (ex: fim de semana ou dia não configurado na escala), pular
         if (scheduledHours === 0) {
           skippedCount++;
           continue;
@@ -126,26 +142,6 @@ export async function createDailyTimeClockRecords() {
     logger.logError(error, { context: 'Erro no job diário de criação de registros de ponto' });
     throw error;
   }
-}
-
-/**
- * Helper: Calcular horas agendadas
- */
-function calculateScheduledHours(workSchedule, date, lunchBreakHours = 0) {
-  if (!workSchedule) return 0;
-  
-  const dayOfWeek = new Date(date).getDay(); // 0 = domingo, 1 = segunda, etc.
-  const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
-  const dayName = dayNames[dayOfWeek];
-  
-  const schedule = workSchedule[dayName];
-  if (!schedule || !schedule.startTime || !schedule.endTime) return 0;
-  
-  const start = new Date(`${date}T${schedule.startTime}`);
-  const end = new Date(`${date}T${schedule.endTime}`);
-  const totalHours = (end.getTime() - start.getTime()) / (1000 * 60 * 60);
-  
-  return Math.max(0, totalHours - lunchBreakHours);
 }
 
 export default {

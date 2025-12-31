@@ -77,7 +77,8 @@ router.get('/', protect, async (req, res) => {
           overtimeExceptions: emp.overtimeExceptions || [],
           workSchedule,
           lunchBreakHours: emp.lunchBreakHours,
-          lateTolerance: emp.lateTolerance
+          lateTolerance: emp.lateTolerance,
+          requiresTimeClock: emp.requiresTimeClock || false
         };
       });
       
@@ -91,7 +92,7 @@ router.get('/', protect, async (req, res) => {
 // Create new employee (admin only)
 router.post('/', protect, admin, async (req, res) => {
   try {
-    const { name, email, password, department, role, overtimeLimit, workSchedule, lunchBreakHours, lateTolerance } = req.body;
+    const { name, email, password, department, role, overtimeLimit, workSchedule, lunchBreakHours, lateTolerance, requiresTimeClock } = req.body;
 
     const userExists = await findUserByEmail(email);
     if (userExists) {
@@ -112,6 +113,7 @@ router.post('/', protect, admin, async (req, res) => {
       workSchedule: workSchedule || null, // Manter para backward compatibility
       lunchBreakHours: lunchBreakHours ? Number(lunchBreakHours) : null,
       lateTolerance: lateTolerance ? Number(lateTolerance) : 10,
+      requiresTimeClock: requiresTimeClock !== undefined ? Boolean(requiresTimeClock) : false,
     });
 
     // Se workSchedule foi fornecido, criar na nova tabela normalizada também
@@ -172,7 +174,8 @@ router.post('/', protect, admin, async (req, res) => {
       overtimeExceptions: user.overtimeExceptions || [],
       workSchedule: workScheduleObject,
       lunchBreakHours: user.lunchBreakHours,
-      lateTolerance: user.lateTolerance
+      lateTolerance: user.lateTolerance,
+      requiresTimeClock: user.requiresTimeClock || false
     });
   } catch (error) {
     logger.logError(error, { context: 'Criar funcionário', userId: req.user?._id });
@@ -476,7 +479,8 @@ router.patch('/:id/role', protect, admin, async (req, res) => {
       overtimeExceptions: updatedUser.overtimeExceptions || [],
       workSchedule: updatedUser.workSchedule,
       lunchBreakHours: updatedUser.lunchBreakHours,
-      lateTolerance: updatedUser.lateTolerance
+      lateTolerance: updatedUser.lateTolerance,
+      requiresTimeClock: updatedUser.requiresTimeClock || false
     });
   } catch (error) {
     logger.logError(error, { context: 'Atualizar role do funcionário', employeeId: req.params.id, userId: req.user?._id });
@@ -625,10 +629,11 @@ const handleWorkScheduleUpdate = async (req, res) => {
     // Criar/atualizar jornada na tabela normalizada
     const createdSchedules = await createOrUpdateWorkSchedule(user.id, schedulesArray);
 
-    // Atualizar campos lunchBreakHours e lateTolerance no usuário
+    // Atualizar campos lunchBreakHours, lateTolerance e requiresTimeClock no usuário
     const updateData = {};
     if (lunchBreakHours !== undefined) updateData.lunchBreakHours = lunchBreakHours ? Number(lunchBreakHours) : null;
     if (lateTolerance !== undefined) updateData.lateTolerance = lateTolerance ? Number(lateTolerance) : 10;
+    if (req.body.requiresTimeClock !== undefined) updateData.requiresTimeClock = Boolean(req.body.requiresTimeClock);
 
     if (Object.keys(updateData).length > 0) {
       await updateUser(user.id, updateData);
@@ -682,7 +687,8 @@ const handleWorkScheduleUpdate = async (req, res) => {
       overtimeExceptions: updatedUser.overtimeExceptions || [],
       workSchedule: workScheduleObject,
       lunchBreakHours: updatedUser.lunchBreakHours,
-      lateTolerance: updatedUser.lateTolerance
+      lateTolerance: updatedUser.lateTolerance,
+      requiresTimeClock: updatedUser.requiresTimeClock || false
     });
   } catch (error) {
     logger.logError(error, { context: 'Atualizar jornada de trabalho', employeeId: req.params.id, userId: req.user?.id });
@@ -721,6 +727,7 @@ router.get('/:id/work-schedule', protect, adminOrManager, async (req, res) => {
       workSchedule: workScheduleObject,
       lunchBreakHours: user.lunchBreakHours,
       lateTolerance: user.lateTolerance,
+      requiresTimeClock: user.requiresTimeClock || false,
       schedulesCount: schedules.length
     });
   } catch (error) {
