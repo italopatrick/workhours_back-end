@@ -86,6 +86,7 @@ model User {
   lunchBreakHours  Float?   // Horas de almoço (ex: 1.0, 1.5)
   lateTolerance    Int?     @default(10) // Tolerância em minutos para atraso
   requiresTimeClock Boolean  @default(false) // Se true, funcionário precisa bater ponto
+  lastLoginAt      DateTime? // Data e hora do último login
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 

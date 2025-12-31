@@ -34,7 +34,8 @@ export async function createUser(userData) {
     workSchedule,
     lunchBreakHours,
     lateTolerance,
-    requiresTimeClock
+    requiresTimeClock,
+    lastLoginAt
   } = userData;
 
   // Hash password if provided and not external auth
@@ -60,7 +61,8 @@ export async function createUser(userData) {
       workSchedule: workSchedule || null,
       lunchBreakHours: lunchBreakHours || null,
       lateTolerance: lateTolerance || 10,
-      requiresTimeClock: requiresTimeClock !== undefined ? requiresTimeClock : false
+      requiresTimeClock: requiresTimeClock !== undefined ? requiresTimeClock : false,
+      lastLoginAt: lastLoginAt || null
     }
   });
 
@@ -102,6 +104,7 @@ export async function findUserById(id, includePassword = false) {
       lunchBreakHours: true,
       lateTolerance: true,
       requiresTimeClock: true,
+      lastLoginAt: true,
       createdAt: true,
       updatedAt: true
     }
@@ -147,6 +150,7 @@ export async function findUserByEmail(email, includePassword = false) {
       lunchBreakHours: true,
       lateTolerance: true,
       requiresTimeClock: true,
+      lastLoginAt: true,
       createdAt: true,
       updatedAt: true
     }
@@ -206,6 +210,7 @@ export async function findUsers(query = {}, options = {}) {
     lunchBreakHours: true,
     lateTolerance: true,
     requiresTimeClock: true,
+    lastLoginAt: true,
     createdAt: true,
     updatedAt: true
   };
