@@ -550,9 +550,40 @@ const handleWorkScheduleUpdate = async (req, res) => {
       });
     }
 
-    // Validar e processar workSchedule
+    // Se apenas requiresTimeClock está sendo atualizado, pular validação de workSchedule
+    const onlyUpdatingTimeClock = workSchedule === undefined && 
+                                   (lunchBreakHours === undefined && lateTolerance === undefined) &&
+                                   req.body.requiresTimeClock !== undefined;
+
+    if (onlyUpdatingTimeClock) {
+      // Apenas atualizar requiresTimeClock sem modificar a jornada
+      const updateData = {};
+      if (req.body.requiresTimeClock !== undefined) {
+        updateData.requiresTimeClock = Boolean(req.body.requiresTimeClock);
+      }
+      
+      if (Object.keys(updateData).length > 0) {
+        await updateUser(user.id, updateData);
+      }
+      
+      const updatedUser = await findUserById(user.id);
+      const updatedSchedules = await getWorkScheduleByEmployee(user.id, false);
+      const workScheduleObject = parseWorkScheduleArray(updatedSchedules);
+      
+      return res.json({
+        id: updatedUser.id,
+        name: updatedUser.name,
+        email: updatedUser.email,
+        workSchedule: workScheduleObject,
+        lunchBreakHours: updatedUser.lunchBreakHours,
+        lateTolerance: updatedUser.lateTolerance,
+        requiresTimeClock: updatedUser.requiresTimeClock || false
+      });
+    }
+
+    // Validar e processar workSchedule (se fornecido)
     if (workSchedule === undefined) {
-      return res.status(400).json({ message: 'Jornada de trabalho é obrigatória.' });
+      return res.status(400).json({ message: 'Jornada de trabalho é obrigatória quando não está apenas atualizando requiresTimeClock.' });
     }
 
     // Se workSchedule for string, tentar fazer parse
