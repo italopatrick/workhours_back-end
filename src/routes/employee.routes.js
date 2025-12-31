@@ -429,6 +429,63 @@ router.delete('/:id/overtime-exception/:month/:year', protect, adminOrManager, a
   }
 });
 
+// Atualizar email de um funcionário (admin only)
+router.patch('/:id/email', protect, admin, async (req, res) => {
+  try {
+    const { email } = req.body;
+    
+    if (!email) {
+      return res.status(400).json({ message: 'Email é obrigatório' });
+    }
+
+    // Validar formato de email
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return res.status(400).json({ message: 'Formato de email inválido' });
+    }
+
+    const user = await findUserById(req.params.id);
+    if (!user) {
+      return res.status(404).json({ message: 'Funcionário não encontrado' });
+    }
+
+    // Verificar se email já está em uso por outro usuário
+    const existingUser = await findUserByEmail(email);
+    if (existingUser && existingUser.id !== user.id) {
+      return res.status(400).json({ message: 'Este email já está em uso por outro funcionário' });
+    }
+
+    const updatedUser = await updateUser(user.id, { email });
+    
+    // Registrar log de auditoria
+    const requestMeta = getRequestMetadata(req);
+    await logAudit({
+      action: 'employee_created', // Usar ação genérica já que não temos específica para email
+      entityType: 'employee',
+      entityId: updatedUser.id,
+      userId: req.user.id,
+      targetUserId: updatedUser.id,
+      description: `Email do funcionário ${updatedUser.name} atualizado de ${user.email} para ${email}`,
+      metadata: {
+        oldEmail: user.email,
+        newEmail: email
+      },
+      ...requestMeta
+    });
+
+    res.json({
+      id: updatedUser.id,
+      name: updatedUser.name,
+      email: updatedUser.email,
+      department: updatedUser.department,
+      role: updatedUser.role
+    });
+  } catch (error) {
+    logger.logError(error, { context: 'Atualizar email do funcionário', employeeId: req.params.id, userId: req.user?._id });
+    res.status(500).json({ message: 'Erro no servidor', error: error.message });
+  }
+});
+
 // Atualizar role de um funcionário (admin only)
 router.patch('/:id/role', protect, admin, async (req, res) => {
   try {
