@@ -429,8 +429,8 @@ router.delete('/:id/overtime-exception/:month/:year', protect, adminOrManager, a
   }
 });
 
-// Atualizar email de um funcionário (admin only)
-router.patch('/:id/email', protect, admin, async (req, res) => {
+// Atualizar email de um funcionário (admin ou manager)
+router.patch('/:id/email', protect, adminOrManager, async (req, res) => {
   try {
     const { email } = req.body;
     
@@ -447,6 +447,16 @@ router.patch('/:id/email', protect, admin, async (req, res) => {
     const user = await findUserById(req.params.id);
     if (!user) {
       return res.status(404).json({ message: 'Funcionário não encontrado' });
+    }
+
+    // Se for manager, verificar se o funcionário pertence ao seu departamento
+    if (req.user.role === 'manager') {
+      const hasAccess = await checkEmployeeDepartment(req.params.id, req.user);
+      if (!hasAccess) {
+        return res.status(403).json({ 
+          message: 'Você só pode gerenciar funcionários do seu departamento.' 
+        });
+      }
     }
 
     // Verificar se email já está em uso por outro usuário
