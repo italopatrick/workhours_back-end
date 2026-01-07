@@ -319,7 +319,27 @@ router.post('/credit', protect, async (req, res) => {
       ...requestMeta
     });
 
-    // Buscar campos relacionados (já foi feito acima)
+    // Buscar campos relacionados
+    const recordWithRelations = await prisma.hourBankRecord.findUnique({
+      where: { id: record.id },
+      include: {
+        employee: {
+          select: {
+            id: true,
+            name: true,
+            email: true
+          }
+        },
+        creator: {
+          select: {
+            id: true,
+            name: true,
+            email: true
+          }
+        }
+      }
+    });
+
     res.status(201).json({
       id: recordWithRelations.id,
       employeeId: recordWithRelations.employee.id,
