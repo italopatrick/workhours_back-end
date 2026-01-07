@@ -213,14 +213,22 @@ async function resolveFailedMigration() {
                   "totalWorkedHours" DOUBLE PRECISION,
                   "scheduledHours" DOUBLE PRECISION,
                   "lateMinutes" INTEGER,
+                  "lunchLateMinutes" INTEGER,
                   "overtimeHours" DOUBLE PRECISION,
                   "negativeHours" DOUBLE PRECISION,
                   "hourBankCreditId" TEXT,
                   "hourBankDebitId" TEXT,
+                  "justificationId" TEXT,
+                  "justification" TEXT,
                   "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
                   "updatedAt" TIMESTAMP(3) NOT NULL,
                   CONSTRAINT "time_clocks_pkey" PRIMARY KEY ("id")
               );
+            `);
+            
+            // Adicionar comentário para lunchLateMinutes
+            await prisma.$executeRawUnsafe(`
+              COMMENT ON COLUMN "time_clocks"."lunchLateMinutes" IS 'Minutos de atraso no retorno do almoço';
             `);
             console.log('   ✅ Tabela time_clocks criada ou já existe');
           } catch (error) {
