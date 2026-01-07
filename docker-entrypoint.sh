@@ -52,6 +52,12 @@ if [ -n "$DATABASE_URL" ]; then
     echo "⚠️  Aviso: Falha ao verificar/corrigir colunas da tabela users."
   }
   
+  # Verificar e corrigir colunas da tabela time_clocks mesmo se migrate deploy passar
+  echo "🔍 Verificando colunas da tabela time_clocks..."
+  node scripts/fix-timeclocks-columns.js || {
+    echo "⚠️  Aviso: Falha ao verificar/corrigir colunas da tabela time_clocks."
+  }
+  
   # Verificar e corrigir migration de justificativas mesmo se migrate deploy passar
   # (garantir que a tabela existe)
   echo "🔍 Verificando tabela time_clock_justifications..."
