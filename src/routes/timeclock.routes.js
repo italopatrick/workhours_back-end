@@ -818,6 +818,65 @@ router.get('/records/:employeeId', protect, adminOrManager, async (req, res) => 
   }
 });
 
+// GET /timeclock/all-records - Listar todos os registros (admin)
+router.get('/all-records', protect, adminOrManager, async (req, res) => {
+  try {
+    const { startDate, endDate, page = 1, limit = 20 } = req.query;
+    
+    // Apenas admin pode ver todos os registros
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ 
+        message: 'Acesso negado. Apenas administradores podem ver todos os registros.' 
+      });
+    }
+    
+    const prismaFilter = {};
+    
+    if (startDate && endDate) {
+      prismaFilter.date = {
+        gte: startDate,
+        lte: endDate
+      };
+    }
+    
+    const skip = (Number(page) - 1) * Number(limit);
+    
+    const [records, total] = await Promise.all([
+      prisma.timeClock.findMany({
+        where: prismaFilter,
+        include: {
+          employee: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+              lateTolerance: true,
+              department: true
+            }
+          }
+        },
+        orderBy: { date: 'desc' },
+        skip,
+        take: Number(limit)
+      }),
+      prisma.timeClock.count({ where: prismaFilter })
+    ]);
+    
+    res.json({
+      records,
+      pagination: {
+        page: Number(page),
+        limit: Number(limit),
+        total,
+        totalPages: Math.ceil(total / Number(limit))
+      }
+    });
+  } catch (error) {
+    logger.logError(error, { context: 'Buscar todos os registros de ponto', userId: req.user?.id });
+    res.status(500).json({ message: 'Erro ao buscar registros', error: error.message });
+  }
+});
+
 // GET /timeclock/department-records - Listar registros por departamento (manager)
 router.get('/department-records', protect, async (req, res) => {
   try {
