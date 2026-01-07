@@ -63,16 +63,26 @@ router.get('/balance', protect, async (req, res) => {
   try {
     const targetEmployeeId = req.query.employeeId || req.user.id;
     
-    // Se não for admin e tentar buscar de outro funcionário, negar
-    if (req.user.role !== 'admin' && targetEmployeeId !== req.user.id) {
+    // Validar acesso baseado na role
+    if (req.user.role === 'employee' && targetEmployeeId !== req.user.id) {
       return res.status(403).json({ 
         error: 'Você não tem permissão para visualizar o saldo de outros funcionários' 
       });
     }
-
+    
+    // Buscar funcionário (necessário para todas as roles)
     const employee = await findUserById(targetEmployeeId);
     if (!employee) {
       return res.status(404).json({ error: 'Funcionário não encontrado' });
+    }
+
+    // Se for manager, verificar se o funcionário pertence ao seu departamento
+    if (req.user.role === 'manager' && targetEmployeeId !== req.user.id) {
+      if (employee.department !== req.user.department) {
+        return res.status(403).json({ 
+          error: 'Acesso negado. Você só pode visualizar saldos de funcionários do seu departamento.' 
+        });
+      }
     }
 
     const balance = await calculateBalance(targetEmployeeId);
@@ -110,19 +120,59 @@ router.get('/records', protect, async (req, res) => {
   try {
     const { employeeId, startDate, endDate, type, status } = req.query;
     
+    const prismaQuery = {};
+    let useEmployeeIdFilter = true;
     let targetEmployeeId = req.user.id;
     
-    // Se for admin e forneceu employeeId, usa o fornecido
-    if (req.user.role === 'admin' && employeeId) {
-      targetEmployeeId = employeeId;
-    } else if (req.user.role !== 'admin' && employeeId && employeeId !== req.user.id) {
-      // Funcionário tentando buscar de outro funcionário
-      return res.status(403).json({ 
-        error: 'Você não tem permissão para visualizar registros de outros funcionários' 
-      });
+    // Determinar employeeId baseado na role
+    if (req.user.role === 'admin') {
+      // Admin pode ver qualquer funcionário
+      if (employeeId) {
+        targetEmployeeId = employeeId;
+      }
+    } else if (req.user.role === 'manager') {
+      // Manager pode ver funcionários do departamento
+      if (employeeId) {
+        // Validar se o funcionário pertence ao departamento do manager
+        const employee = await findUserById(employeeId);
+        if (!employee) {
+          return res.status(404).json({ error: 'Funcionário não encontrado' });
+        }
+        if (employee.department !== req.user.department) {
+          return res.status(403).json({ 
+            error: 'Acesso negado. Você só pode visualizar registros de funcionários do seu departamento.' 
+          });
+        }
+        targetEmployeeId = employeeId;
+      } else {
+        // Sem employeeId específico, filtrar por departamento
+        const departmentEmployees = await prisma.user.findMany({
+          where: { department: req.user.department },
+          select: { id: true }
+        });
+        const employeeIds = departmentEmployees.map(emp => emp.id);
+        // Modificar a query para usar IN
+        if (employeeIds.length > 0) {
+          prismaQuery.employeeId = { in: employeeIds };
+          useEmployeeIdFilter = false; // Já definido acima
+        } else {
+          // Se não há funcionários no departamento, retornar vazio
+          return res.json([]);
+        }
+      }
+    } else if (req.user.role === 'employee') {
+      // Employee só vê próprios registros
+      if (employeeId && employeeId !== req.user.id) {
+        return res.status(403).json({ 
+          error: 'Você não tem permissão para visualizar registros de outros funcionários' 
+        });
+      }
     }
-
-    const prismaQuery = { employeeId: targetEmployeeId };
+    
+    // Definir employeeId apenas se não foi definido acima (manager sem employeeId)
+    if (useEmployeeIdFilter) {
+      prismaQuery.employeeId = targetEmployeeId;
+    }
     
     if (startDate) {
       prismaQuery.date = { ...prismaQuery.date, gte: startDate };
@@ -198,16 +248,25 @@ router.post('/credit', protect, async (req, res) => {
     }
 
     // Validar se o usuário tem permissão
-    if (req.user.role !== 'admin' && employeeId !== req.user.id) {
+    if (req.user.role === 'employee' && employeeId !== req.user.id) {
       return res.status(403).json({ 
         error: 'Você só pode criar crédito para si mesmo' 
       });
     }
-
+    
     // Verificar se funcionário existe
     const employee = await findUserById(employeeId);
     if (!employee) {
       return res.status(404).json({ error: 'Funcionário não encontrado' });
+    }
+
+    // Se for manager, verificar se o funcionário pertence ao seu departamento
+    if (req.user.role === 'manager' && employeeId !== req.user.id) {
+      if (employee.department !== req.user.department) {
+        return res.status(403).json({ 
+          error: 'Acesso negado. Você só pode criar crédito para funcionários do seu departamento.' 
+        });
+      }
     }
 
     // Validar limites antes de criar
@@ -282,9 +341,14 @@ router.post('/credit', protect, async (req, res) => {
   }
 });
 
-// POST /hour-bank/debit - Criar débito no banco de horas (apenas admin)
-router.post('/debit', protect, admin, async (req, res) => {
+// POST /hour-bank/debit - Criar débito no banco de horas (admin ou manager)
+router.post('/debit', protect, async (req, res) => {
   try {
+    // Verificar se é admin ou manager
+    if (!['admin', 'manager'].includes(req.user.role)) {
+      return res.status(403).json({ message: 'Acesso negado: apenas administradores e gestores' });
+    }
+
     const { employeeId, date, hours, reason } = req.body;
 
     if (!employeeId || !date || !hours || !reason) {
@@ -297,6 +361,13 @@ router.post('/debit', protect, admin, async (req, res) => {
     const employee = await findUserById(employeeId);
     if (!employee) {
       return res.status(404).json({ error: 'Funcionário não encontrado' });
+    }
+
+    // Se for manager, verificar se o funcionário pertence ao seu departamento
+    if (req.user.role === 'manager' && employee.department !== req.user.department) {
+      return res.status(403).json({ 
+        error: 'Acesso negado. Você só pode criar débito para funcionários do seu departamento.' 
+      });
     }
 
     // Verificar saldo disponível
@@ -413,9 +484,14 @@ router.post('/debit', protect, admin, async (req, res) => {
   }
 });
 
-// PATCH /hour-bank/records/:id/status - Aprovar/rejeitar registro (apenas admin)
-router.patch('/records/:id/status', protect, admin, async (req, res) => {
+// PATCH /hour-bank/records/:id/status - Aprovar/rejeitar registro (admin ou manager)
+router.patch('/records/:id/status', protect, async (req, res) => {
   try {
+    // Verificar se é admin ou manager
+    if (!['admin', 'manager'].includes(req.user.role)) {
+      return res.status(403).json({ message: 'Acesso negado: apenas administradores e gestores' });
+    }
+
     const { id } = req.params;
     const { status } = req.body;
 
@@ -425,11 +501,28 @@ router.patch('/records/:id/status', protect, admin, async (req, res) => {
       });
     }
 
+    // Buscar o registro para validar acesso
     const record = await prisma.hourBankRecord.findUnique({
-      where: { id }
+      where: { id },
+      include: {
+        employee: {
+          select: {
+            id: true,
+            department: true
+          }
+        }
+      }
     });
+
     if (!record) {
       return res.status(404).json({ error: 'Registro não encontrado' });
+    }
+
+    // Se for manager, verificar se o funcionário pertence ao seu departamento
+    if (req.user.role === 'manager' && record.employee.department !== req.user.department) {
+      return res.status(403).json({ 
+        error: 'Acesso negado. Você só pode aprovar registros de funcionários do seu departamento.' 
+      });
     }
 
     const oldStatus = record.status;
@@ -459,14 +552,20 @@ router.patch('/records/:id/status', protect, admin, async (req, res) => {
       }
     }
 
-    // Se está aprovando um débito, verificar saldo disponível
+    // Se está aprovando um débito, permitir saldo negativo
+    // (com a nova implementação, débitos podem resultar em saldo negativo)
+    // Apenas logar o saldo após aprovação, mas não bloquear
     if (status === 'approved' && record.type === 'debit') {
       const balance = await calculateBalance(record.employeeId);
-      if (balance.availableBalance < record.hours) {
-        return res.status(400).json({
-          error: `Saldo insuficiente. Saldo disponível: ${balance.availableBalance}h, Débito: ${record.hours}h`,
-          canProceed: false,
-          availableBalance: balance.availableBalance
+      const balanceAfterDebit = balance.availableBalance - record.hours;
+      
+      if (balanceAfterDebit < 0) {
+        logger.info('Aprovando débito que resultará em saldo negativo', {
+          employeeId: record.employeeId,
+          recordId: record.id,
+          currentBalance: balance.availableBalance,
+          debitHours: record.hours,
+          balanceAfterDebit
         });
       }
     }
@@ -577,11 +676,28 @@ router.get('/limits', protect, async (req, res) => {
 
     const targetEmployeeId = employeeId || req.user.id;
     
-    // Se não for admin e tentar verificar de outro funcionário, negar
-    if (req.user.role !== 'admin' && targetEmployeeId !== req.user.id) {
+    // Se não for admin ou manager e tentar verificar de outro funcionário, negar
+    if ((req.user.role !== 'admin' && req.user.role !== 'manager') && targetEmployeeId !== req.user.id) {
       return res.status(403).json({ 
         error: 'Você não tem permissão para verificar limites de outros funcionários' 
       });
+    }
+    
+    // Se for manager, verificar se o funcionário pertence ao seu departamento
+    if (req.user.role === 'manager' && targetEmployeeId !== req.user.id) {
+      const employee = await prisma.user.findUnique({
+        where: { id: targetEmployeeId },
+        select: { department: true }
+      });
+      
+      if (!employee) {
+        return res.status(404).json({ error: 'Funcionário não encontrado' });
+      }
+      if (employee.department !== req.user.department) {
+        return res.status(403).json({ 
+          error: 'Você só pode verificar limites de funcionários do seu departamento' 
+        });
+      }
     }
 
     const balance = await calculateBalance(targetEmployeeId);

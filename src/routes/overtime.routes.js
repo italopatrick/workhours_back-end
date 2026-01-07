@@ -46,11 +46,11 @@ const formatHoursForDisplay = (hours) => {
   return `${hoursInt}h${minutes > 0 ? minutes + 'min' : ''}`;
 };
 
-// Get all overtime records (filtered by user for employees, all for admin)
+// Get all overtime records (filtered by user for employees, all for admin, department for manager)
 router.get('/', protect, async (req, res) => {
   try {
-    const { startDate, endDate, employeeId } = req.query;
-    logger.debug('Buscando registros de horas extras', { startDate, endDate, employeeId, userId: req.user?.id });
+    const { startDate, endDate, employeeId, department } = req.query;
+    logger.debug('Buscando registros de horas extras', { startDate, endDate, employeeId, department, userId: req.user?.id, userRole: req.user?.role });
 
     // Cria o filtro base
     let filter = {};
@@ -66,11 +66,47 @@ router.get('/', protect, async (req, res) => {
       };
     }
 
-    // Se for um funcionário, filtra apenas seus registros
+    // Filtros baseados na role
     if (req.user.role === 'employee') {
+      // Employee vê apenas próprios registros
       prismaFilter.employeeId = req.user.id;
-    } else if (employeeId) { // Se for admin e um employeeId foi fornecido
-      prismaFilter.employeeId = employeeId;
+    } else if (req.user.role === 'manager') {
+      // Manager vê registros do departamento
+      // Se forneceu employeeId, validar se pertence ao departamento
+      if (employeeId) {
+        const employee = await findUserById(employeeId);
+        if (!employee) {
+          return res.status(404).json({ message: 'Funcionário não encontrado' });
+        }
+        if (employee.department !== req.user.department) {
+          return res.status(403).json({ 
+            message: 'Acesso negado. Você só pode ver registros de funcionários do seu departamento.' 
+          });
+        }
+        prismaFilter.employeeId = employeeId;
+      } else {
+        // Filtrar por departamento do manager
+        // Buscar todos os funcionários do departamento
+        const departmentEmployees = await prisma.user.findMany({
+          where: { department: req.user.department },
+          select: { id: true }
+        });
+        const employeeIds = departmentEmployees.map(emp => emp.id);
+        prismaFilter.employeeId = { in: employeeIds };
+      }
+    } else if (req.user.role === 'admin') {
+      // Admin pode ver tudo, mas pode filtrar por employeeId ou department
+      if (employeeId) {
+        prismaFilter.employeeId = employeeId;
+      } else if (department) {
+        // Filtrar por departamento
+        const departmentEmployees = await prisma.user.findMany({
+          where: { department },
+          select: { id: true }
+        });
+        const employeeIds = departmentEmployees.map(emp => emp.id);
+        prismaFilter.employeeId = { in: employeeIds };
+      }
     }
 
     logger.debug('Filtro aplicado', { filter: prismaFilter, userId: req.user?.id });
@@ -82,7 +118,8 @@ router.get('/', protect, async (req, res) => {
         employee: {
           select: {
             id: true,
-            name: true
+            name: true,
+            department: true
           }
         }
       },
@@ -131,14 +168,28 @@ router.post('/', protect, async (req, res) => {
   try {
     const { date, startTime, endTime, reason } = req.body;
     
-    // Se for admin, usa o employeeId do body, senão usa o id do usuário logado
-    const employeeId = req.user.role === 'admin' ? req.body.employeeId : req.user.id;
+    // Se for admin ou manager, usa o employeeId do body, senão usa o id do usuário logado
+    let employeeId;
+    if (req.user.role === 'admin' || req.user.role === 'manager') {
+      employeeId = req.body.employeeId || req.user.id;
+    } else {
+      employeeId = req.user.id;
+    }
     logger.debug('Dados de criação de hora extra recebidos', { employeeId, userId: req.user?.id });
 
     // Busca o funcionário para pegar o nome e limite de horas extras
     const employee = await findUserById(employeeId);
     if (!employee) {
       return res.status(404).json({ message: 'Funcionário não encontrado' });
+    }
+    
+    // Se for manager, verificar se o funcionário pertence ao seu departamento
+    if (req.user.role === 'manager' && employeeId !== req.user.id) {
+      if (employee.department !== req.user.department) {
+        return res.status(403).json({ 
+          message: 'Você só pode criar horas extras para funcionários do seu departamento' 
+        });
+      }
     }
 
     // Calcula as horas corretamente
@@ -317,14 +368,36 @@ router.post('/', protect, async (req, res) => {
   }
 });
 
-// Update overtime status (admin only)
-router.patch('/:id', protect, admin, async (req, res) => {
+// Update overtime status (admin or manager)
+router.patch('/:id', protect, async (req, res) => {
   try {
+    // Verificar se é admin ou manager
+    if (!['admin', 'manager'].includes(req.user.role)) {
+      return res.status(403).json({ message: 'Acesso negado: apenas administradores e gestores' });
+    }
+
     const overtime = await prisma.overtime.findUnique({
-      where: { id: req.params.id }
+      where: { id: req.params.id },
+      include: {
+        employee: {
+          select: {
+            id: true,
+            department: true
+          }
+        }
+      }
     });
     if (!overtime) {
       return res.status(404).json({ message: 'Registro de hora extra não encontrado' });
+    }
+
+    // Se for manager, verificar se o funcionário pertence ao seu departamento
+    if (req.user.role === 'manager') {
+      if (!overtime.employee || overtime.employee.department !== req.user.department) {
+        return res.status(403).json({ 
+          message: 'Acesso negado. Você só pode aprovar horas extras de funcionários do seu departamento.' 
+        });
+      }
     }
 
     const oldStatus = overtime.status;

@@ -78,3 +78,30 @@ export const admin = (req, res, next) => {
   });
   next();
 };
+
+// Middleware para verificar se usuário é admin ou manager
+export const adminOrManager = (req, res, next) => {
+  if (!req.user) {
+    logger.warn('Usuário não autenticado na verificação de admin/manager', {
+      url: req.originalUrl || req.url
+    });
+    return res.status(401).json({ message: 'Usuário não autenticado' });
+  }
+
+  if (!['admin', 'manager'].includes(req.user.role)) {
+    logger.warn('Acesso negado: usuário não é admin ou manager', {
+      userId: req.user.id,
+      userName: req.user.name,
+      userRole: req.user.role,
+      url: req.originalUrl || req.url
+    });
+    return res.status(403).json({ message: 'Acesso negado: apenas administradores e gestores' });
+  }
+
+  logger.debug('Acesso de admin/manager concedido', {
+    userId: req.user.id,
+    userName: req.user.name,
+    userRole: req.user.role
+  });
+  next();
+};

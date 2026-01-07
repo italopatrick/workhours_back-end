@@ -30,7 +30,12 @@ export async function createUser(userData) {
     externalId,
     externalAuth = false,
     overtimeLimit,
-    overtimeExceptions
+    overtimeExceptions,
+    workSchedule,
+    lunchBreakHours,
+    lateTolerance,
+    requiresTimeClock,
+    lastLoginAt
   } = userData;
 
   // Hash password if provided and not external auth
@@ -52,7 +57,12 @@ export async function createUser(userData) {
       externalId: externalIdString,
       externalAuth,
       overtimeLimit,
-      overtimeExceptions: overtimeExceptions || null
+      overtimeExceptions: overtimeExceptions || null,
+      workSchedule: workSchedule || null,
+      lunchBreakHours: lunchBreakHours || null,
+      lateTolerance: lateTolerance || 10,
+      requiresTimeClock: requiresTimeClock !== undefined ? requiresTimeClock : false,
+      lastLoginAt: lastLoginAt || null
     }
   });
 
@@ -78,10 +88,41 @@ export async function findUserById(id, includePassword = false) {
       externalAuth: true,
       overtimeLimit: true,
       overtimeExceptions: true,
+      workSchedule: true, // Manter para backward compatibility durante migração
+      workSchedules: {
+        select: {
+          id: true,
+          dayOfWeek: true,
+          startTime: true,
+          endTime: true,
+          isActive: true
+        },
+        orderBy: {
+          dayOfWeek: 'asc'
+        }
+      },
+      lunchBreakHours: true,
+      lateTolerance: true,
+      requiresTimeClock: true,
+      lastLoginAt: true,
       createdAt: true,
       updatedAt: true
     }
   });
+
+  // Log para depuração - apenas se for buscar workSchedule
+  if (user && !includePassword) {
+    const logger = (await import('../utils/logger.js')).default;
+    logger.debug('findUserById retornou', {
+      userId: user.id,
+      hasWorkSchedule: !!user.workSchedule,
+      workScheduleType: typeof user.workSchedule,
+      workScheduleValue: user.workSchedule,
+      workSchedulesCount: user.workSchedules?.length || 0,
+      lunchBreakHours: user.lunchBreakHours,
+      lateTolerance: user.lateTolerance
+    });
+  }
 
   return user;
 }
@@ -105,6 +146,11 @@ export async function findUserByEmail(email, includePassword = false) {
       externalAuth: true,
       overtimeLimit: true,
       overtimeExceptions: true,
+      workSchedule: true,
+      lunchBreakHours: true,
+      lateTolerance: true,
+      requiresTimeClock: true,
+      lastLoginAt: true,
       createdAt: true,
       updatedAt: true
     }
@@ -136,23 +182,43 @@ export async function findUserByExternalId(externalId) {
  * @returns {Promise<Array>} Array of users
  */
 export async function findUsers(query = {}, options = {}) {
-  const { select, orderBy, skip, take } = options;
+  const { select, orderBy, skip, take, include } = options;
+
+  const selectFields = select || {
+    id: true,
+    email: true,
+    role: true,
+    name: true,
+    department: true,
+    externalId: true,
+    externalAuth: true,
+    overtimeLimit: true,
+    overtimeExceptions: true,
+    workSchedule: true, // Manter para backward compatibility durante migração
+    workSchedules: {
+      select: {
+        id: true,
+        dayOfWeek: true,
+        startTime: true,
+        endTime: true,
+        isActive: true
+      },
+      orderBy: {
+        dayOfWeek: 'asc'
+      }
+    },
+    lunchBreakHours: true,
+    lateTolerance: true,
+    requiresTimeClock: true,
+    lastLoginAt: true,
+    createdAt: true,
+    updatedAt: true
+  };
 
   const users = await prisma.user.findMany({
     where: query,
-    select: select || {
-      id: true,
-      email: true,
-      role: true,
-      name: true,
-      department: true,
-      externalId: true,
-      externalAuth: true,
-      overtimeLimit: true,
-      overtimeExceptions: true,
-      createdAt: true,
-      updatedAt: true
-    },
+    select: include ? undefined : selectFields,
+    include: include,
     orderBy: orderBy || { name: 'asc' },
     skip,
     take
@@ -178,12 +244,54 @@ export async function updateUser(id, data) {
     data.externalId = data.externalId ? String(data.externalId) : null;
   }
 
-  const user = await prisma.user.update({
-    where: { id },
-    data
+  // Garantir que campos JSON sejam atualizados corretamente mesmo se estiverem NULL
+  // O Prisma precisa receber o objeto JSON diretamente
+  const updateData = { ...data };
+  
+  // Log detalhado antes do update
+  const logger = (await import('../utils/logger.js')).default;
+  
+  if (data.workSchedule !== undefined) {
+    logger.debug('updateUser - atualizando workSchedule', {
+      userId: id,
+      workScheduleType: typeof data.workSchedule,
+      workScheduleValue: data.workSchedule,
+      workScheduleString: typeof data.workSchedule === 'object' ? JSON.stringify(data.workSchedule) : data.workSchedule
+    });
+  }
+  logger.debug('updateUser - dados antes do update Prisma', {
+    userId: id,
+    updateDataKeys: Object.keys(updateData),
+    workSchedulePresent: updateData.workSchedule !== undefined,
+    workScheduleType: typeof updateData.workSchedule,
+    workScheduleIsNull: updateData.workSchedule === null,
+    workScheduleValue: updateData.workSchedule
   });
 
-  return user;
+  try {
+    const user = await prisma.user.update({
+      where: { id },
+      data: updateData
+    });
+
+    logger.debug('updateUser - update Prisma concluído', {
+      userId: user.id,
+      hasWorkSchedule: !!user.workSchedule,
+      workScheduleType: typeof user.workSchedule,
+      workScheduleValue: user.workSchedule
+    });
+
+    return user;
+  } catch (error) {
+    logger.error('updateUser - erro no Prisma update', {
+      userId: id,
+      error: error.message,
+      errorCode: error.code,
+      updateDataKeys: Object.keys(updateData),
+      workSchedulePresent: updateData.workSchedule !== undefined
+    });
+    throw error;
+  }
 }
 
 /**

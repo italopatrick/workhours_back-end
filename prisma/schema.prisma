@@ -12,6 +12,7 @@ datasource db {
 
 enum UserRole {
   admin
+  manager
   employee
 }
 
@@ -47,8 +48,19 @@ enum AuditAction {
   employee_limit_changed
   employee_exception_added
   employee_exception_removed
+  employee_work_schedule_updated
   settings_updated
   settings_logo_updated
+  timeclock_entry
+  timeclock_exit
+  timeclock_lunch_exit
+  timeclock_lunch_return
+  timeclock_entry_with_justification
+  timeclock_exit_with_justification
+  timeclock_edited
+  justification_created
+  justification_updated
+  justification_deactivated
 }
 
 enum EntityType {
@@ -56,6 +68,7 @@ enum EntityType {
   hourbank
   employee
   settings
+  timeclock
 }
 
 model User {
@@ -69,6 +82,11 @@ model User {
   externalAuth     Boolean  @default(false)
   overtimeLimit    Float?
   overtimeExceptions Json?  // Array of { month: number, year: number, additionalHours: number }
+  workSchedule     Json?    // Jornada por dia da semana: { monday: { startTime: "08:00", endTime: "18:00" }, ... }
+  lunchBreakHours  Float?   // Horas de almoço (ex: 1.0, 1.5)
+  lateTolerance    Int?     @default(10) // Tolerância em minutos para atraso
+  requiresTimeClock Boolean  @default(false) // Se true, funcionário precisa bater ponto
+  lastLoginAt      DateTime? // Data e hora do último login
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
@@ -83,11 +101,32 @@ model User {
   createdHourBankRecords HourBankRecord[] @relation("CreatedByHourBank")
   approvedHourBankRecords HourBankRecord[] @relation("ApprovedByHourBank")
   rejectedHourBankRecords HourBankRecord[] @relation("RejectedByHourBank")
+  timeClockRecords TimeClock[]
+  workSchedules    WorkSchedule[]
 
   @@index([email])
   @@index([role])
   @@index([externalId])
+  @@index([department])
   @@map("users")
+}
+
+model WorkSchedule {
+  id          String   @id @default(uuid())
+  employeeId  String
+  dayOfWeek   String   // 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'
+  startTime   String   // '08:00' (formato HH:mm)
+  endTime     String   // '18:00' (formato HH:mm)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  employee    User     @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@unique([employeeId, dayOfWeek])
+  @@index([employeeId])
+  @@index([dayOfWeek])
+  @@map("work_schedules")
 }
 
 model Overtime {
@@ -144,6 +183,8 @@ model HourBankRecord {
   creator         User             @relation("CreatedByHourBank", fields: [createdBy], references: [id])
   approver        User?            @relation("ApprovedByHourBank", fields: [approvedBy], references: [id])
   rejector        User?            @relation("RejectedByHourBank", fields: [rejectedBy], references: [id])
+  timeClockCredit TimeClock[]      @relation("TimeClockCredit")
+  timeClockDebit  TimeClock[]      @relation("TimeClockDebit")
 
   @@index([employeeId])
   @@index([date])
@@ -184,6 +225,40 @@ model AuditLog {
   @@map("audit_logs")
 }
 
+model TimeClock {
+  id                String    @id @default(uuid())
+  employeeId        String
+  date              String    // Format: YYYY-MM-DD
+  entryTime         DateTime? // Entrada
+  lunchExitTime     DateTime? // Saída para almoço
+  lunchReturnTime   DateTime? // Volta do almoço
+  exitTime          DateTime? // Saída final
+  totalWorkedHours  Float?    // Horas trabalhadas (sem contar almoço)
+  scheduledHours    Float?    // Horas esperadas do dia
+  lateMinutes       Int?      // Minutos de atraso
+  lunchLateMinutes  Int?      // Minutos de atraso no retorno do almoço
+  overtimeHours     Float?    // Horas extras (se trabalhou além do horário)
+  negativeHours     Float?    // Horas negativas (se saiu antes)
+  hourBankCreditId  String?   // ID do crédito criado (se houver hora extra)
+  hourBankDebitId   String?   // ID do débito criado (se houver abatimento)
+  justification     String?   // Justificativa para atraso ou horas não cumpridas (texto livre ou motivo da Justification)
+  justificationId   String?   // ID da justificativa pré-definida (opcional)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  // Relations
+  employee          User      @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  hourBankCredit    HourBankRecord? @relation("TimeClockCredit", fields: [hourBankCreditId], references: [id])
+  hourBankDebit     HourBankRecord? @relation("TimeClockDebit", fields: [hourBankDebitId], references: [id])
+  justificationReason Justification? @relation(fields: [justificationId], references: [id], onDelete: SetNull)
+
+  @@unique([employeeId, date])
+  @@index([employeeId])
+  @@index([date])
+  @@index([employeeId, date])
+  @@map("time_clocks")
+}
+
 model CompanySettings {
   id                      String   @id @default(uuid())
   name                    String   @default("")
@@ -199,5 +274,19 @@ model CompanySettings {
   updatedAt               DateTime @updatedAt
 
   @@map("company_settings")
+}
+
+model Justification {
+  id          String   @id @default(uuid())
+  reason      String
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  timeClockRecords TimeClock[]
+
+  @@index([isActive])
+  @@map("time_clock_justifications")
 }
 

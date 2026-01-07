@@ -8,9 +8,13 @@ import reportRoutes from './routes/report.routes.js';
 import settingsRoutes from './routes/settings.routes.js';
 import hourBankRoutes from './routes/hourBank.routes.js';
 import auditRoutes from './routes/audit.routes.js';
+import justificationRoutes from './routes/justification.routes.js';
+import timeclockRoutes from './routes/timeclock.routes.js';
 import logger from './utils/logger.js';
 import { requestLogger } from './middleware/requestLogger.js';
 import { connectDB, disconnectDB } from './config/database.js';
+import cron from 'node-cron';
+import { createDailyTimeClockRecords } from './jobs/dailyTimeClockJob.js';
 
 dotenv.config();
 
@@ -95,6 +99,24 @@ connectDB().catch((error) => {
   process.exit(1);
 });
 
+// Configurar job diário para criar registros automáticos de ponto
+// Executa diariamente às 00:05 (início do dia seguinte para processar o dia anterior)
+// Isso garante que todas as jornadas do dia anterior já terminaram
+cron.schedule('5 0 * * *', async () => {
+  try {
+    logger.info('Executando job diário de criação de registros de ponto automáticos');
+    await createDailyTimeClockRecords();
+    logger.info('Job diário de criação de registros de ponto concluído com sucesso');
+  } catch (error) {
+    logger.logError(error, { context: 'Erro ao executar job diário de criação de registros de ponto' });
+  }
+}, {
+  scheduled: true,
+  timezone: 'America/Sao_Paulo'
+});
+
+logger.info('Job diário de criação de registros de ponto configurado para executar às 00:05 (horário de Brasília) - processa o dia anterior');
+
 // Root route - Welcome message
 app.get('/', (req, res) => {
   const now = new Date();
@@ -124,6 +146,8 @@ app.use('/api/reports', reportRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/hour-bank', hourBankRoutes);
 app.use('/api/audit', auditRoutes);
+app.use('/api/justifications', justificationRoutes);
+app.use('/api/timeclock', timeclockRoutes);
 
 const PORT = process.env.PORT || 5000;
 const HOST = process.env.HOST || '0.0.0.0';

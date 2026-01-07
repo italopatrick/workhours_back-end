@@ -241,22 +241,24 @@ router.post('/external-login', async (req, res) => {
           department: userDepartment,
           externalId,
           externalAuth: true,
-          role: userRole // Definir papel com base no ID externo
+          role: userRole, // Definir papel com base no ID externo
+          lastLoginAt: new Date() // Definir lastLoginAt no momento da criação
         });
         
         logger.info('Novo usuário criado com ID externo', { externalId, userRole, userId: user.id, login });
       } else {
-        // Atualizar dados do usuário existente
+        // Não atualizar dados do usuário existente - preservar todas as configurações locais
+        // Apenas atualizar lastLoginAt para rastrear último login
         user = await updateUser(user.id, {
-          name: userName,
-          email: userEmail,
-          department: userDepartment,
-          externalAuth: true,
-          externalId: String(externalId), // Garantir que é string
-          role: userRole // Atualizar papel com base no ID externo
+          lastLoginAt: new Date()
         });
         
-        logger.info('Usuário existente atualizado com ID externo', { externalId, userRole, userId: user.id, login });
+        logger.info('Login realizado - apenas lastLoginAt atualizado', { 
+          externalId, 
+          preservedRole: user.role, 
+          userId: user.id, 
+          login 
+        });
       }
       
       // Gerar token JWT para o usuário
