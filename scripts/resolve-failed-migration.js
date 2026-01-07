@@ -124,7 +124,7 @@ async function resolveFailedMigration() {
           // Aplicar migration em partes para melhor controle de erros
           console.log('   📝 Verificando e adicionando valores aos enums...');
           
-          // Verificar se o enum AuditAction existe e adicionar valores
+          // Verificar se o enum AuditAction existe, criar se não existir, e adicionar valores
           try {
             const auditActionCheck = await prisma.$queryRawUnsafe(`
               SELECT EXISTS (
@@ -135,33 +135,58 @@ async function resolveFailedMigration() {
             
             const auditActionExists = Array.isArray(auditActionCheck) && auditActionCheck[0]?.exists || false;
             
-            if (auditActionExists) {
+            if (!auditActionExists) {
+              console.log('   📝 Criando enum AuditAction...');
+              // Criar enum com valores básicos primeiro
               await prisma.$executeRawUnsafe(`
-                DO $$ 
-                BEGIN
-                    IF NOT EXISTS (SELECT 1 FROM pg_enum WHERE enumlabel = 'timeclock_entry' AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'AuditAction')) THEN
-                        ALTER TYPE "AuditAction" ADD VALUE 'timeclock_entry';
-                    END IF;
-                    IF NOT EXISTS (SELECT 1 FROM pg_enum WHERE enumlabel = 'timeclock_lunch_exit' AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'AuditAction')) THEN
-                        ALTER TYPE "AuditAction" ADD VALUE 'timeclock_lunch_exit';
-                    END IF;
-                    IF NOT EXISTS (SELECT 1 FROM pg_enum WHERE enumlabel = 'timeclock_lunch_return' AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'AuditAction')) THEN
-                        ALTER TYPE "AuditAction" ADD VALUE 'timeclock_lunch_return';
-                    END IF;
-                    IF NOT EXISTS (SELECT 1 FROM pg_enum WHERE enumlabel = 'timeclock_exit' AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'AuditAction')) THEN
-                        ALTER TYPE "AuditAction" ADD VALUE 'timeclock_exit';
-                    END IF;
-                END $$;
+                CREATE TYPE "AuditAction" AS ENUM (
+                  'overtime_created', 'overtime_approved', 'overtime_rejected', 'overtime_updated',
+                  'hourbank_credit_created', 'hourbank_debit_created', 'hourbank_approved', 'hourbank_rejected',
+                  'employee_created', 'employee_deleted', 'employee_role_changed', 'employee_limit_changed',
+                  'employee_exception_added', 'employee_exception_removed', 'employee_work_schedule_updated',
+                  'settings_updated', 'settings_logo_updated',
+                  'timeclock_entry', 'timeclock_exit', 'timeclock_lunch_exit', 'timeclock_lunch_return',
+                  'timeclock_entry_with_justification', 'timeclock_exit_with_justification', 'timeclock_edited',
+                  'justification_created', 'justification_updated', 'justification_deactivated'
+                );
               `);
-              console.log('   ✅ Valores adicionados ao enum AuditAction');
+              console.log('   ✅ Enum AuditAction criado com todos os valores!');
             } else {
-              console.log('   ⚠️  Enum AuditAction não existe. Pulando adição de valores.');
+              // Adicionar valores faltantes
+              const allAuditActions = [
+                'timeclock_entry', 'timeclock_lunch_exit', 'timeclock_lunch_return', 'timeclock_exit',
+                'timeclock_entry_with_justification', 'timeclock_exit_with_justification', 'timeclock_edited',
+                'employee_work_schedule_updated', 'justification_created', 'justification_updated', 'justification_deactivated'
+              ];
+              
+              for (const action of allAuditActions) {
+                try {
+                  await prisma.$executeRawUnsafe(`
+                    DO $$ 
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1 FROM pg_enum 
+                            WHERE enumlabel = '${action}' 
+                            AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'AuditAction')
+                        ) THEN
+                            ALTER TYPE "AuditAction" ADD VALUE '${action}';
+                        END IF;
+                    END $$;
+                  `);
+                } catch (error) {
+                  // Ignorar erros de valor já existente
+                  if (!error.message.includes('already exists')) {
+                    console.log(`   ⚠️  Erro ao adicionar ${action}: ${error.message}`);
+                  }
+                }
+              }
+              console.log('   ✅ Valores verificados/adicionados ao enum AuditAction');
             }
           } catch (error) {
-            console.log(`   ⚠️  Erro ao adicionar valores ao enum AuditAction: ${error.message}. Continuando...`);
+            console.log(`   ⚠️  Erro ao processar enum AuditAction: ${error.message}. Continuando...`);
           }
           
-          // Verificar se o enum EntityType existe e adicionar valor
+          // Verificar se o enum EntityType existe, criar se não existir, e adicionar valor
           try {
             const entityTypeCheck = await prisma.$queryRawUnsafe(`
               SELECT EXISTS (
@@ -172,21 +197,30 @@ async function resolveFailedMigration() {
             
             const entityTypeExists = Array.isArray(entityTypeCheck) && entityTypeCheck[0]?.exists || false;
             
-            if (entityTypeExists) {
+            if (!entityTypeExists) {
+              console.log('   📝 Criando enum EntityType...');
+              await prisma.$executeRawUnsafe(`
+                CREATE TYPE "EntityType" AS ENUM ('overtime', 'hourbank', 'employee', 'settings', 'timeclock');
+              `);
+              console.log('   ✅ Enum EntityType criado com todos os valores!');
+            } else {
+              // Adicionar valor timeclock se não existir
               await prisma.$executeRawUnsafe(`
                 DO $$ 
                 BEGIN
-                    IF NOT EXISTS (SELECT 1 FROM pg_enum WHERE enumlabel = 'timeclock' AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'EntityType')) THEN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM pg_enum 
+                        WHERE enumlabel = 'timeclock' 
+                        AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'EntityType')
+                    ) THEN
                         ALTER TYPE "EntityType" ADD VALUE 'timeclock';
                     END IF;
                 END $$;
               `);
-              console.log('   ✅ Valor adicionado ao enum EntityType');
-            } else {
-              console.log('   ⚠️  Enum EntityType não existe. Pulando adição de valor.');
+              console.log('   ✅ Valor verificado/adicionado ao enum EntityType');
             }
           } catch (error) {
-            console.log(`   ⚠️  Erro ao adicionar valor ao enum EntityType: ${error.message}. Continuando...`);
+            console.log(`   ⚠️  Erro ao processar enum EntityType: ${error.message}. Continuando...`);
           }
           
           console.log('   📝 Adicionando colunas na tabela users...');
@@ -329,6 +363,66 @@ async function resolveFailedMigration() {
         } catch (error) {
           console.error('   ❌ Erro crítico ao aplicar migration:', error.message);
           // Não lançar erro, apenas logar - outras migrations podem ser aplicadas
+          console.log('   ⚠️  Continuando com outras migrations...');
+        }
+      } else if (migrationName === '20251207230000_add_work_schedules_table') {
+        console.log(`\n🔧 Resolvendo migration: ${migrationName}`);
+        console.log('   ℹ️  Aplicando migration manualmente...');
+        
+        try {
+          console.log('   📝 Criando tabela work_schedules...');
+          await prisma.$executeRawUnsafe(`
+            CREATE TABLE IF NOT EXISTS "work_schedules" (
+                "id" TEXT NOT NULL,
+                "employeeId" TEXT NOT NULL,
+                "dayOfWeek" TEXT NOT NULL,
+                "startTime" TEXT NOT NULL,
+                "endTime" TEXT NOT NULL,
+                "isActive" BOOLEAN NOT NULL DEFAULT true,
+                "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                "updatedAt" TIMESTAMP(3) NOT NULL,
+                CONSTRAINT "work_schedules_pkey" PRIMARY KEY ("id")
+            );
+          `);
+          
+          console.log('   📝 Criando índices...');
+          await prisma.$executeRawUnsafe(`CREATE UNIQUE INDEX IF NOT EXISTS "work_schedules_employeeId_dayOfWeek_key" ON "work_schedules"("employeeId", "dayOfWeek");`);
+          await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "work_schedules_employeeId_idx" ON "work_schedules"("employeeId");`);
+          await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "work_schedules_dayOfWeek_idx" ON "work_schedules"("dayOfWeek");`);
+          
+          console.log('   📝 Criando foreign key...');
+          const fkCheck = await prisma.$queryRawUnsafe(`
+            SELECT EXISTS (
+              SELECT FROM information_schema.table_constraints 
+              WHERE constraint_schema = 'public'
+              AND constraint_name = 'work_schedules_employeeId_fkey'
+              AND table_name = 'work_schedules'
+            ) as exists;
+          `);
+          
+          if (!Array.isArray(fkCheck) || !fkCheck[0]?.exists) {
+            await prisma.$executeRawUnsafe(`
+              ALTER TABLE "work_schedules" 
+              ADD CONSTRAINT "work_schedules_employeeId_fkey" 
+              FOREIGN KEY ("employeeId") 
+              REFERENCES "users"("id") 
+              ON DELETE CASCADE 
+              ON UPDATE CASCADE;
+            `);
+          }
+          
+          // Marcar migration como concluída
+          await prisma.$executeRawUnsafe(`
+            UPDATE "_prisma_migrations"
+            SET finished_at = NOW(),
+                applied_steps_count = 1
+            WHERE migration_name = '${migrationName}';
+          `);
+          
+          console.log('   ✅ Migration aplicada e marcada como concluída!');
+        } catch (error) {
+          console.error('   ❌ Erro ao aplicar migration:', error.message);
+          // Não lançar erro, apenas logar
           console.log('   ⚠️  Continuando com outras migrations...');
         }
       } else {
