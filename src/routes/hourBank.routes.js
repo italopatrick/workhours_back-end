@@ -70,22 +70,19 @@ router.get('/balance', protect, async (req, res) => {
       });
     }
     
+    // Buscar funcionário (necessário para todas as roles)
+    const employee = await findUserById(targetEmployeeId);
+    if (!employee) {
+      return res.status(404).json({ error: 'Funcionário não encontrado' });
+    }
+
     // Se for manager, verificar se o funcionário pertence ao seu departamento
     if (req.user.role === 'manager' && targetEmployeeId !== req.user.id) {
-      const employee = await findUserById(targetEmployeeId);
-      if (!employee) {
-        return res.status(404).json({ error: 'Funcionário não encontrado' });
-      }
       if (employee.department !== req.user.department) {
         return res.status(403).json({ 
           error: 'Acesso negado. Você só pode visualizar saldos de funcionários do seu departamento.' 
         });
       }
-    }
-
-    const employee = await findUserById(targetEmployeeId);
-    if (!employee) {
-      return res.status(404).json({ error: 'Funcionário não encontrado' });
     }
 
     const balance = await calculateBalance(targetEmployeeId);
@@ -257,23 +254,19 @@ router.post('/credit', protect, async (req, res) => {
       });
     }
     
+    // Verificar se funcionário existe
+    const employee = await findUserById(employeeId);
+    if (!employee) {
+      return res.status(404).json({ error: 'Funcionário não encontrado' });
+    }
+
     // Se for manager, verificar se o funcionário pertence ao seu departamento
     if (req.user.role === 'manager' && employeeId !== req.user.id) {
-      const employee = await findUserById(employeeId);
-      if (!employee) {
-        return res.status(404).json({ error: 'Funcionário não encontrado' });
-      }
       if (employee.department !== req.user.department) {
         return res.status(403).json({ 
           error: 'Acesso negado. Você só pode criar crédito para funcionários do seu departamento.' 
         });
       }
-    }
-
-    // Verificar se funcionário existe
-    const employee = await findUserById(employeeId);
-    if (!employee) {
-      return res.status(404).json({ error: 'Funcionário não encontrado' });
     }
 
     // Validar limites antes de criar

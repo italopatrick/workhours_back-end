@@ -27,7 +27,7 @@ router.get('/pdf', protect, async (req, res) => {
     }
     // Admin vê tudo (prismaFilter vazio)
     
-    const overtime = await prisma.overtimeRecord.findMany({
+    const overtime = await prisma.overtime.findMany({
       where: prismaFilter,
       include: {
         employee: {
@@ -85,7 +85,7 @@ router.get('/csv', protect, async (req, res) => {
     }
     // Admin vê tudo (prismaFilter vazio)
     
-    const overtime = await prisma.overtimeRecord.findMany({
+    const overtime = await prisma.overtime.findMany({
       where: prismaFilter,
       include: {
         employee: {
