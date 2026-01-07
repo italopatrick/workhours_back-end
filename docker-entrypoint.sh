@@ -27,6 +27,12 @@ if [ -n "$DATABASE_URL" ]; then
   echo "📦 Executando migrations do Prisma..."
   echo "🔗 Database: ${DB_HOST:-${DATABASE_URL%%@*}}" # Mostra host ou user@host (sem senha)
   
+  # Resolver migrations falhadas primeiro
+  echo "🔧 Verificando e resolvendo migrations falhadas..."
+  node scripts/resolve-failed-migration.js || {
+    echo "⚠️  Aviso: Falha ao resolver migrations falhadas. Continuando..."
+  }
+  
   # Executar migrations do Prisma
   npx prisma migrate deploy || {
     echo "⚠️  Aviso: Falha ao executar migrations. Verifique os logs acima."
