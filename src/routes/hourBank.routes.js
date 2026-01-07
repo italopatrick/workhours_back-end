@@ -73,7 +73,10 @@ router.get('/balance', protect, async (req, res) => {
     // Se for manager, verificar se o funcionário pertence ao seu departamento
     if (req.user.role === 'manager' && targetEmployeeId !== req.user.id) {
       const employee = await findUserById(targetEmployeeId);
-      if (!employee || employee.department !== req.user.department) {
+      if (!employee) {
+        return res.status(404).json({ error: 'Funcionário não encontrado' });
+      }
+      if (employee.department !== req.user.department) {
         return res.status(403).json({ 
           error: 'Acesso negado. Você só pode visualizar saldos de funcionários do seu departamento.' 
         });
@@ -257,7 +260,10 @@ router.post('/credit', protect, async (req, res) => {
     // Se for manager, verificar se o funcionário pertence ao seu departamento
     if (req.user.role === 'manager' && employeeId !== req.user.id) {
       const employee = await findUserById(employeeId);
-      if (!employee || employee.department !== req.user.department) {
+      if (!employee) {
+        return res.status(404).json({ error: 'Funcionário não encontrado' });
+      }
+      if (employee.department !== req.user.department) {
         return res.status(403).json({ 
           error: 'Acesso negado. Você só pode criar crédito para funcionários do seu departamento.' 
         });
@@ -691,7 +697,10 @@ router.get('/limits', protect, async (req, res) => {
         select: { department: true }
       });
       
-      if (!employee || employee.department !== req.user.department) {
+      if (!employee) {
+        return res.status(404).json({ error: 'Funcionário não encontrado' });
+      }
+      if (employee.department !== req.user.department) {
         return res.status(403).json({ 
           error: 'Você só pode verificar limites de funcionários do seu departamento' 
         });
