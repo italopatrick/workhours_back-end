@@ -36,10 +36,20 @@ if [ -n "$DATABASE_URL" ]; then
   # Executar migrations do Prisma
   npx prisma migrate deploy || {
     echo "⚠️  Aviso: Falha ao executar migrations. Verifique os logs acima."
+    echo "⚠️  Tentando corrigir colunas faltantes na tabela users..."
+    node scripts/fix-users-columns.js || {
+      echo "⚠️  Falha ao corrigir colunas da tabela users. Continuando..."
+    }
     echo "⚠️  Tentando aplicar migration de justificativas diretamente..."
     node scripts/check-and-fix-migration.js || {
       echo "⚠️  Falha ao aplicar migration manualmente. Continuando com o servidor..."
     }
+  }
+  
+  # Verificar e corrigir colunas da tabela users mesmo se migrate deploy passar
+  echo "🔍 Verificando colunas da tabela users..."
+  node scripts/fix-users-columns.js || {
+    echo "⚠️  Aviso: Falha ao verificar/corrigir colunas da tabela users."
   }
   
   # Verificar e corrigir migration de justificativas mesmo se migrate deploy passar
